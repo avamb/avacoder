@@ -344,6 +344,7 @@ class CodexClient:
             env=env,
         )
         self._codex = AsyncCodex(config=config)
+        self._install_approval_handler()
         try:
             await self._codex.__aenter__()
             self._thread = await self._start_thread()
@@ -353,6 +354,50 @@ class CodexClient:
             raise _translate_sdk_error(exc) from exc
         self._entered = True
         return self
+
+    def _install_approval_handler(self) -> None:
+        """Accept every escalated approval request (headless operation).
+
+        The SDK's default handler accepts only commandExecution/fileChange
+        approvals and silently REJECTS everything else - notably MCP tool
+        calls, which surface to the model as "user rejected MCP tool call".
+        AutoForge intends its MCP feature tools to run unattended (the Claude
+        path pre-approves them in the permissions allow-list), and shell/file
+        containment comes from the OS sandbox, so accepting here is safe.
+
+        Reaches through private attributes (AsyncCodex._client._sync); the
+        openai-codex dependency is pinned <0.145.0 precisely because of this.
+        """
+
+        def _accept_all(method: str, params: Any) -> dict:
+            if method.startswith("item/") and method.endswith("/requestApproval"):
+                return {"decision": "accept"}
+            if method == "mcpServer/elicitation/request":
+                # Codex wraps MCP tool-call consent in an MCP elicitation:
+                # message "Allow the <name> MCP server to run tool ...?" with
+                # _meta.codex_approval_kind == "mcp_tool_call" and an empty
+                # form schema. Accept those; decline genuine elicitations
+                # (a server asking the user for data) -- headless, nobody to ask.
+                meta = (params or {}).get("_meta") or {}
+                if meta.get("codex_approval_kind") == "mcp_tool_call":
+                    return {"action": "accept", "content": {}}
+                logger.warning(
+                    "Codex engine: declining non-approval MCP elicitation from "
+                    "server %r (headless)", (params or {}).get("serverName")
+                )
+                return {"action": "decline"}
+            logger.warning(
+                "Codex engine: unhandled app-server request %s (empty reply)", method
+            )
+            return {}
+
+        try:
+            self._codex._client._sync._approval_handler = _accept_all  # noqa: SLF001
+        except AttributeError:
+            logger.warning(
+                "Codex engine: could not install approval handler (SDK layout "
+                "changed?); MCP tool approvals may be auto-rejected"
+            )
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         self._turn_stream = None
