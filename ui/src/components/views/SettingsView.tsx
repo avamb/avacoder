@@ -19,6 +19,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
 const PROVIDER_INFO_TEXT: Record<string, string> = {
   claude: 'Default provider. Uses Claude CLI credentials. API key auth is recommended.',
+  codex: 'Uses your ChatGPT subscription via the local Codex runtime. Run "codex login" once - no API key needed.',
   kimi: 'Kimi Code subscription (K3 models). Create an API key in the Kimi Code Console at kimi.com/code',
   glm: 'Get an API key at open.bigmodel.cn',
   azure: 'Anthropic models on Azure AI Foundry. Set your resource base URL and API key.',
@@ -478,7 +479,7 @@ export function SettingsView() {
                 <div className="space-y-2">
                   <Label className="font-medium">Reasoning Effort</Label>
                   <p className="text-sm text-muted-foreground">
-                    How deeply Claude thinks before responding. xhigh is recommended for autonomous coding.
+                    How deeply the model reasons before responding. xhigh is recommended for autonomous coding.
                   </p>
                   <div className="flex rounded-lg border overflow-hidden">
                     {(['low', 'medium', 'high', 'xhigh', 'max'] as EffortLevel[]).map((level) => (

@@ -22,7 +22,7 @@ export function TypingIndicator() {
         />
       </div>
       <span className="text-sm font-mono text-muted-foreground">
-        Claude is thinking...
+        Assistant is thinking...
       </span>
     </div>
   )

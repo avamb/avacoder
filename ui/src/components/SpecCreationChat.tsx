@@ -326,7 +326,7 @@ export function SpecCreationChat({
                   Starting Spec Creation
                 </h3>
                 <p className="text-sm text-muted-foreground">
-                  Connecting to Claude to help you create your app specification...
+                  Connecting to the assistant to help you create your app specification...
                 </p>
                 {connectionStatus === 'error' && (
                   <Button

@@ -263,7 +263,7 @@ export function ExpandProjectChat({
                   Starting Project Expansion
                 </h3>
                 <p className="text-sm text-muted-foreground">
-                  Connecting to Claude to help you add new features to your project...
+                  Connecting to the assistant to help you add new features to your project...
                 </p>
                 {connectionStatus === 'error' && (
                   <Button
