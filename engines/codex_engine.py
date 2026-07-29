@@ -334,6 +334,19 @@ class CodexClient:
             'project_doc_fallback_filenames=["AGENTS.md", "CLAUDE.md"]'
         )
 
+        # Coding agents (workspace-write) need what the Claude-path sandbox
+        # allows: network (package installs, docker) and git commits. Codex's
+        # workspace-write keeps <cwd>/.git read-only by default, which made
+        # agents skip features with "cannot create .git/index.lock"; listing
+        # the .git dir itself as a writable root lifts that protection.
+        if self._resolve_sandbox().value == "workspace-write":
+            overrides.append("sandbox_workspace_write.network_access=true")
+            if opts.cwd:
+                git_dir = str(Path(opts.cwd).resolve() / ".git")
+                overrides.append(
+                    f"sandbox_workspace_write.writable_roots=[{_toml_value(git_dir)}]"
+                )
+
         env: Optional[dict[str, str]] = None
         if opts.env:
             env = {k: v for k, v in opts.env.items()}

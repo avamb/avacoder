@@ -175,9 +175,13 @@ async def update_settings(update: SettingsUpdate):
         if update.api_provider != old_provider:
             provider = API_PROVIDERS.get(update.api_provider)
             if provider:
-                # Auto-set base URL from provider definition
+                # Auto-set base URL from provider definition; clear it for
+                # providers without one (codex, claude) so a stale URL from
+                # the previous provider doesn't leak into the engine env
                 if provider.get("base_url"):
                     set_setting("api_base_url", provider["base_url"])
+                else:
+                    set_setting("api_base_url", "")
                 # Auto-set model to provider's default
                 if provider.get("default_model") and update.api_model is None:
                     set_setting("api_model", provider["default_model"])
