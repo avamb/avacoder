@@ -327,12 +327,13 @@ class CodexClient:
 
         opts = self.options
         overrides = build_mcp_config_overrides(opts.mcp_servers)
-        # Honor the project CLAUDE.md that the chat sessions write their
-        # system prompts into: codex auto-loads AGENTS.md and falls back to
-        # CLAUDE.md via this documented config key (plan section 3.4).
-        overrides.append(
-            'project_doc_fallback_filenames=["AGENTS.md", "CLAUDE.md"]'
-        )
+        # NOTE: deliberately NOT adding CLAUDE.md to project_doc_fallback_
+        # filenames. On the Claude path the chat sessions overwrite the
+        # project's CLAUDE.md with their own read-only system prompts, which
+        # then poisons coding agents ("You must NEVER implement code") if
+        # loaded as project docs. On Codex, chat system prompts travel via
+        # native developerInstructions instead, and project instructions
+        # belong in AGENTS.md (auto-loaded).
 
         # Coding agents (workspace-write) need what the Claude-path sandbox
         # allows: network (package installs, docker) and git commits. Codex's

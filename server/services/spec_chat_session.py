@@ -134,16 +134,23 @@ class SpecChatSession:
         project_path = str(self.project_dir.resolve())
         system_prompt = skill_content.replace("$ARGUMENTS", project_path)
 
-        # Write system prompt to CLAUDE.md file to avoid Windows command line length limit
-        # The SDK will read this via setting_sources=["project"]
-        claude_md_path = self.project_dir / "CLAUDE.md"
-        with open(claude_md_path, "w", encoding="utf-8") as f:
-            f.write(system_prompt)
-        logger.info(f"Wrote system prompt to {claude_md_path}")
-
         # Create engine client with limited tools for spec creation
         from registry import get_effective_engine_config
         engine_config = get_effective_engine_config()
+
+        if engine_config.engine == "claude":
+            # Claude CLI: write the system prompt to CLAUDE.md and load it via
+            # setting_sources (avoids the ~8191 char Windows cmd-line limit).
+            # Include "user" for global skills and subagents from ~/.claude/
+            claude_md_path = self.project_dir / "CLAUDE.md"
+            with open(claude_md_path, "w", encoding="utf-8") as f:
+                f.write(system_prompt)
+            logger.info(f"Wrote system prompt to {claude_md_path}")
+            prompt_kwargs = {"setting_sources": ["project", "user"]}
+        else:
+            # Codex (and future engines): native system-prompt channel, no
+            # CLAUDE.md side effects
+            prompt_kwargs = {"system_prompt": system_prompt}
 
         try:
             self.client = create_engine_client(
@@ -151,9 +158,7 @@ class SpecChatSession:
                 EngineOptions(
                     model=engine_config.model,
                     effort=engine_config.effort,
-                    # System prompt loaded from CLAUDE.md via setting_sources
-                    # Include "user" for global skills and subagents from ~/.claude/
-                    setting_sources=["project", "user"],
+                    **prompt_kwargs,
                     allowed_tools=[
                         "Read",
                         "Write",

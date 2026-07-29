@@ -278,16 +278,24 @@ class AssistantChatSession:
         # Get system prompt with project context
         system_prompt = get_system_prompt(self.project_name, self.project_dir)
 
-        # Write system prompt to CLAUDE.md file to avoid Windows command line length limit
-        # The SDK will read this via setting_sources=["project"]
-        claude_md_path = self.project_dir / "CLAUDE.md"
-        with open(claude_md_path, "w", encoding="utf-8") as f:
-            f.write(system_prompt)
-        logger.info(f"Wrote assistant system prompt to {claude_md_path}")
-
         # Resolve engine configuration (engine id, env overrides, model, effort)
         from registry import get_effective_engine_config
         engine_config = get_effective_engine_config()
+
+        if engine_config.engine == "claude":
+            # Claude CLI: write the system prompt to CLAUDE.md and load it via
+            # setting_sources (avoids the ~8191 char Windows cmd-line limit).
+            # CAUTION: this overwrites the project CLAUDE.md - a known
+            # upstream wart; other engines must not inherit it.
+            claude_md_path = self.project_dir / "CLAUDE.md"
+            with open(claude_md_path, "w", encoding="utf-8") as f:
+                f.write(system_prompt)
+            logger.info(f"Wrote assistant system prompt to {claude_md_path}")
+            prompt_kwargs = {"setting_sources": ["project"]}
+        else:
+            # Codex (and future engines): native system-prompt channel, no
+            # CLAUDE.md side effects
+            prompt_kwargs = {"system_prompt": system_prompt}
 
         try:
             logger.info("Creating engine client (%s)...", engine_config.engine)
@@ -296,9 +304,7 @@ class AssistantChatSession:
                 EngineOptions(
                     model=engine_config.model,
                     effort=engine_config.effort,
-                    # System prompt loaded from CLAUDE.md via setting_sources
-                    # This avoids Windows command line length limit (~8191 chars)
-                    setting_sources=["project"],
+                    **prompt_kwargs,
                     allowed_tools=[*READONLY_BUILTIN_TOOLS, *ASSISTANT_FEATURE_TOOLS],
                     disallowed_tools=DISALLOWED_ASSISTANT_TOOLS,
                     mcp_servers=mcp_servers,
