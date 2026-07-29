@@ -9,16 +9,15 @@ but cannot modify any files.
 
 import json
 import logging
-import os
-import shutil
 import sys
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import AsyncGenerator, Optional
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from dotenv import load_dotenv
+
+from engines import EngineOptions, create_engine_client
 
 from .assistant_database import (
     add_message,
@@ -204,7 +203,7 @@ class AssistantChatSession:
         self.project_name = project_name
         self.project_dir = project_dir
         self.conversation_id = conversation_id
-        self.client: Optional[ClaudeSDKClient] = None
+        self.client = None  # engine client (see engines package)
         self._client_entered: bool = False
         self.created_at = datetime.now()
         self._history_loaded: bool = False  # Track if we've loaded history for resumed conversations
@@ -286,36 +285,29 @@ class AssistantChatSession:
             f.write(system_prompt)
         logger.info(f"Wrote assistant system prompt to {claude_md_path}")
 
-        # Use system Claude CLI
-        system_cli = shutil.which("claude")
-
-        # Build environment overrides for API configuration
-        from registry import DEFAULT_MODEL, get_effective_sdk_env, get_effort_setting
-        sdk_env = get_effective_sdk_env()
-        effort = get_effort_setting()
-
-        # Determine model from SDK env (provider-aware) or fallback to env/default
-        model = sdk_env.get("ANTHROPIC_DEFAULT_OPUS_MODEL") or os.getenv("ANTHROPIC_DEFAULT_OPUS_MODEL", DEFAULT_MODEL)
+        # Resolve engine configuration (engine id, env overrides, model, effort)
+        from registry import get_effective_engine_config
+        engine_config = get_effective_engine_config()
 
         try:
-            logger.info("Creating ClaudeSDKClient...")
-            self.client = ClaudeSDKClient(
-                options=ClaudeAgentOptions(
-                    model=model,
-                    effort=effort,  # type: ignore[arg-type]  # SDK 0.1.61 Literal omits "xhigh"
-                    cli_path=system_cli,
+            logger.info("Creating engine client (%s)...", engine_config.engine)
+            self.client = create_engine_client(
+                engine_config.engine,
+                EngineOptions(
+                    model=engine_config.model,
+                    effort=engine_config.effort,
                     # System prompt loaded from CLAUDE.md via setting_sources
                     # This avoids Windows command line length limit (~8191 chars)
                     setting_sources=["project"],
                     allowed_tools=[*READONLY_BUILTIN_TOOLS, *ASSISTANT_FEATURE_TOOLS],
                     disallowed_tools=DISALLOWED_ASSISTANT_TOOLS,
-                    mcp_servers=mcp_servers,  # type: ignore[arg-type]  # SDK accepts dict config at runtime
+                    mcp_servers=mcp_servers,
                     permission_mode="bypassPermissions",
                     max_turns=100,
                     cwd=str(self.project_dir.resolve()),
                     settings=str(settings_file.resolve()),
-                    env=sdk_env,
-                )
+                    env=engine_config.env,
+                ),
             )
             logger.info("Entering Claude client context...")
             await self.client.__aenter__()

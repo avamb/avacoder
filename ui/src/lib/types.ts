@@ -635,6 +635,10 @@ export interface ProviderInfo {
   models: ModelInfo[]
   default_model: string
   requires_auth: boolean
+  /** Client backend driving this provider: "claude" | "codex" */
+  engine?: string
+  /** How credentials are supplied: "none" | "token" | "subscription" */
+  auth_mode?: string
 }
 
 export interface ProvidersResponse {

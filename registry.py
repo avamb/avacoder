@@ -776,9 +776,17 @@ def get_all_settings() -> dict[str, str]:
 # API Provider Definitions
 # =============================================================================
 
+# Provider fields:
+#   engine     - which client backend drives this provider:
+#                "claude" = Claude Code CLI (also all Anthropic-compatible HTTP
+#                endpoints), "codex" = OpenAI Codex CLI (Phase 3, planned)
+#   auth_mode  - "none" (CLI/local credentials), "token" (API key in Settings),
+#                "subscription" (external login, e.g. `codex login`)
 API_PROVIDERS: dict[str, dict[str, Any]] = {
     "claude": {
         "name": "Claude (Anthropic)",
+        "engine": "claude",
+        "auth_mode": "none",
         "base_url": None,
         "requires_auth": False,
         "models": [
@@ -789,6 +797,8 @@ API_PROVIDERS: dict[str, dict[str, Any]] = {
     },
     "kimi": {
         "name": "Kimi Code (Moonshot)",
+        "engine": "claude",
+        "auth_mode": "token",
         "base_url": "https://api.kimi.com/coding/",
         "requires_auth": True,
         "auth_env_var": "ANTHROPIC_API_KEY",
@@ -802,6 +812,8 @@ API_PROVIDERS: dict[str, dict[str, Any]] = {
     },
     "glm": {
         "name": "GLM (Zhipu AI)",
+        "engine": "claude",
+        "auth_mode": "token",
         "base_url": "https://api.z.ai/api/anthropic",
         "requires_auth": True,
         "auth_env_var": "ANTHROPIC_AUTH_TOKEN",
@@ -814,6 +826,8 @@ API_PROVIDERS: dict[str, dict[str, Any]] = {
     },
     "azure": {
         "name": "Azure Anthropic (Claude)",
+        "engine": "claude",
+        "auth_mode": "token",
         "base_url": "",
         "requires_auth": True,
         "auth_env_var": "ANTHROPIC_API_KEY",
@@ -826,6 +840,8 @@ API_PROVIDERS: dict[str, dict[str, Any]] = {
     },
     "ollama": {
         "name": "Ollama (Local)",
+        "engine": "claude",
+        "auth_mode": "none",
         "base_url": "http://localhost:11434",
         "requires_auth": False,
         "models": [
@@ -836,6 +852,8 @@ API_PROVIDERS: dict[str, dict[str, Any]] = {
     },
     "custom": {
         "name": "Custom Provider",
+        "engine": "claude",
+        "auth_mode": "token",
         "base_url": "",
         "requires_auth": True,
         "auth_env_var": "ANTHROPIC_AUTH_TOKEN",
@@ -927,3 +945,46 @@ def get_effective_sdk_env() -> dict[str, str]:
         sdk_env["API_TIMEOUT_MS"] = timeout
 
     return sdk_env
+
+
+def get_effective_engine_config():
+    """Resolve the full engine configuration for the current provider settings.
+
+    Unlike get_effective_sdk_env() (which returns a bare env dict and erases
+    provider identity), this carries the engine id, provider id, model, and
+    effort explicitly so client factories can dispatch without re-inferring
+    the provider from ANTHROPIC_BASE_URL substrings.
+
+    Returns:
+        engines.types.EngineConfig
+    """
+    from engines.types import EngineConfig
+
+    all_settings = get_all_settings()
+    provider_id = all_settings.get("api_provider", "claude")
+    provider = API_PROVIDERS.get(provider_id)
+    if provider is None:
+        # Same graceful degradation as get_effective_sdk_env()
+        logger.warning("Unknown API provider '%s', falling back to claude", provider_id)
+        provider_id = "claude"
+        provider = API_PROVIDERS[provider_id]
+
+    env = get_effective_sdk_env()
+
+    # Model resolution mirrors the chat sessions' historical expression:
+    # provider-aware env fan-out first, then process env, then defaults.
+    model = (
+        env.get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+        or os.getenv("ANTHROPIC_DEFAULT_OPUS_MODEL")
+        or (all_settings.get("api_model") if provider_id != "claude" else None)
+        or provider.get("default_model")
+        or DEFAULT_MODEL
+    )
+
+    return EngineConfig(
+        engine=provider.get("engine", "claude"),
+        provider_id=provider_id,
+        model=model,
+        effort=get_effort_setting(),
+        env=env,
+    )

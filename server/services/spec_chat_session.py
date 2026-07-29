@@ -8,15 +8,14 @@ Uses the create-spec.md skill to guide users through app spec creation.
 
 import json
 import logging
-import os
-import shutil
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from dotenv import load_dotenv
+
+from engines import EngineOptions, create_engine_client
 
 from ..schemas import FileAttachment
 from ..utils.document_extraction import DocumentExtractionError
@@ -58,7 +57,7 @@ class SpecChatSession:
         """
         self.project_name = project_name
         self.project_dir = project_dir
-        self.client: Optional[ClaudeSDKClient] = None
+        self.client = None  # engine client (see engines package)
         self.messages: list[dict] = []
         self.complete: bool = False
         self.created_at = datetime.now()
@@ -142,25 +141,16 @@ class SpecChatSession:
             f.write(system_prompt)
         logger.info(f"Wrote system prompt to {claude_md_path}")
 
-        # Create Claude SDK client with limited tools for spec creation
-        # Use Opus for best quality spec generation
-        # Use system Claude CLI to avoid bundled Bun runtime crash (exit code 3) on Windows
-        system_cli = shutil.which("claude")
-
-        # Build environment overrides for API configuration
-        from registry import DEFAULT_MODEL, get_effective_sdk_env, get_effort_setting
-        sdk_env = get_effective_sdk_env()
-        effort = get_effort_setting()
-
-        # Determine model from SDK env (provider-aware) or fallback to env/default
-        model = sdk_env.get("ANTHROPIC_DEFAULT_OPUS_MODEL") or os.getenv("ANTHROPIC_DEFAULT_OPUS_MODEL", DEFAULT_MODEL)
+        # Create engine client with limited tools for spec creation
+        from registry import get_effective_engine_config
+        engine_config = get_effective_engine_config()
 
         try:
-            self.client = ClaudeSDKClient(
-                options=ClaudeAgentOptions(
-                    model=model,
-                    effort=effort,  # type: ignore[arg-type]  # SDK 0.1.61 Literal omits "xhigh"
-                    cli_path=system_cli,
+            self.client = create_engine_client(
+                engine_config.engine,
+                EngineOptions(
+                    model=engine_config.model,
+                    effort=engine_config.effort,
                     # System prompt loaded from CLAUDE.md via setting_sources
                     # Include "user" for global skills and subagents from ~/.claude/
                     setting_sources=["project", "user"],
@@ -176,8 +166,8 @@ class SpecChatSession:
                     max_turns=100,
                     cwd=str(self.project_dir.resolve()),
                     settings=str(settings_file.resolve()),
-                    env=sdk_env,
-                )
+                    env=engine_config.env,
+                ),
             )
             # Enter the async context and track it
             await self.client.__aenter__()

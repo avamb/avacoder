@@ -466,6 +466,8 @@ class ProviderInfo(BaseModel):
     models: list[ModelInfo]
     default_model: str
     requires_auth: bool = False
+    engine: str = "claude"  # Client backend: "claude" | "codex"
+    auth_mode: str = "token"  # "none" | "token" | "subscription"
 
 
 class ProvidersResponse(BaseModel):
@@ -511,9 +513,21 @@ class SettingsUpdate(BaseModel):
     api_auth_token: str | None = Field(None, max_length=500)  # Write-only, never returned
     api_model: str | None = Field(None, max_length=200)
 
+    @field_validator('api_provider')
+    @classmethod
+    def validate_api_provider(cls, v: str | None) -> str | None:
+        if v is not None:
+            from registry import API_PROVIDERS
+            if v not in API_PROVIDERS:
+                raise ValueError(
+                    f"Unknown API provider '{v}'. Must be one of: {sorted(API_PROVIDERS)}"
+                )
+        return v
+
     @field_validator('api_base_url')
     @classmethod
     def validate_api_base_url(cls, v: str | None) -> str | None:
+        # Empty/blank values are allowed (subscription/CLI engines have no URL)
         if v is not None and v.strip():
             v = v.strip()
             if not v.startswith(("http://", "https://")):

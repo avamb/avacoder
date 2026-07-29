@@ -9,7 +9,6 @@ Uses the expand-project.md skill to help users add features to existing projects
 import asyncio
 import json
 import logging
-import os
 import shutil
 import sys
 import threading
@@ -18,8 +17,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from dotenv import load_dotenv
+
+from engines import EngineOptions, create_engine_client
 
 from ..schemas import FileAttachment
 from ..utils.document_extraction import DocumentExtractionError
@@ -65,7 +65,7 @@ class ExpandChatSession:
         """
         self.project_name = project_name
         self.project_dir = project_dir
-        self.client: Optional[ClaudeSDKClient] = None
+        self.client = None  # engine client (see engines package)
         self.messages: list[dict] = []
         self.complete: bool = False
         self.created_at = datetime.now()
@@ -125,9 +125,10 @@ class ExpandChatSession:
         except UnicodeDecodeError:
             skill_content = skill_path.read_text(encoding="utf-8", errors="replace")
 
-        # Find and validate Claude CLI before creating temp files
-        system_cli = shutil.which("claude")
-        if not system_cli:
+        # Resolve engine configuration and validate its CLI before creating temp files
+        from registry import get_effective_engine_config
+        engine_config = get_effective_engine_config()
+        if engine_config.engine == "claude" and not shutil.which("claude"):
             yield {
                 "type": "error",
                 "content": "Claude CLI not found. Please install it: npm install -g @anthropic-ai/claude-code"
@@ -162,14 +163,6 @@ class ExpandChatSession:
         project_path = str(self.project_dir.resolve())
         system_prompt = skill_content.replace("$ARGUMENTS", project_path)
 
-        # Build environment overrides for API configuration
-        from registry import DEFAULT_MODEL, get_effective_sdk_env, get_effort_setting
-        sdk_env = get_effective_sdk_env()
-        effort = get_effort_setting()
-
-        # Determine model from SDK env (provider-aware) or fallback to env/default
-        model = sdk_env.get("ANTHROPIC_DEFAULT_OPUS_MODEL") or os.getenv("ANTHROPIC_DEFAULT_OPUS_MODEL", DEFAULT_MODEL)
-
         # Build MCP servers config for feature creation
         mcp_servers = {
             "features": {
@@ -182,13 +175,13 @@ class ExpandChatSession:
             },
         }
 
-        # Create Claude SDK client
+        # Create engine client
         try:
-            self.client = ClaudeSDKClient(
-                options=ClaudeAgentOptions(
-                    model=model,
-                    effort=effort,  # type: ignore[arg-type]  # SDK 0.1.61 Literal omits "xhigh"
-                    cli_path=system_cli,
+            self.client = create_engine_client(
+                engine_config.engine,
+                EngineOptions(
+                    model=engine_config.model,
+                    effort=engine_config.effort,
                     system_prompt=system_prompt,
                     allowed_tools=[
                         "Read",
@@ -199,13 +192,13 @@ class ExpandChatSession:
                         *EXPAND_FEATURE_TOOLS,
                     ],
                     disallowed_tools=["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"],
-                    mcp_servers=mcp_servers,  # type: ignore[arg-type]  # SDK accepts dict config at runtime
+                    mcp_servers=mcp_servers,
                     permission_mode="bypassPermissions",
                     max_turns=100,
                     cwd=str(self.project_dir.resolve()),
                     settings=str(settings_file.resolve()),
-                    env=sdk_env,
-                )
+                    env=engine_config.env,
+                ),
             )
             await self.client.__aenter__()
             self._client_entered = True

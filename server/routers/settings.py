@@ -52,6 +52,8 @@ async def get_available_providers():
             models=[ModelInfo(id=m["id"], name=m["name"]) for m in pdata.get("models", [])],
             default_model=pdata.get("default_model", ""),
             requires_auth=pdata.get("requires_auth", False),
+            engine=pdata.get("engine", "claude"),
+            auth_mode=pdata.get("auth_mode", "token" if pdata.get("requires_auth") else "none"),
         ))
     return ProvidersResponse(providers=providers, current=current)
 

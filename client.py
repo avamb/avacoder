@@ -12,10 +12,10 @@ import shutil
 import sys
 from pathlib import Path
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import HookContext, HookInput, HookMatcher, SyncHookJSONOutput
 from dotenv import load_dotenv
 
+from engines import EngineOptions, create_engine_client
 from security import SENSITIVE_DIRECTORIES, bash_security_hook
 
 # Load environment variables from .env file if present
@@ -338,13 +338,14 @@ def create_client(
             },
         },
     }
-    # Build environment overrides for API endpoint configuration
-    # Uses get_effective_sdk_env() which reads provider settings from the database,
-    # ensuring UI-configured alternative providers (GLM, Ollama, Kimi, Custom) propagate
-    # correctly to the Claude CLI subprocess
-    from registry import get_effective_sdk_env, get_effort_setting
-    sdk_env = get_effective_sdk_env()
-    effort = get_effort_setting()
+    # Resolve engine configuration (engine id, env overrides, effort) from the
+    # provider settings stored in the database, ensuring UI-configured
+    # alternative providers (GLM, Kimi, Ollama, Custom) propagate correctly
+    from registry import get_effective_engine_config
+    engine_config = get_effective_engine_config()
+    sdk_env = engine_config.env
+    effort = engine_config.effort
+    print(f"   - Engine: {engine_config.engine} (provider: {engine_config.provider_id})")
     print(f"   - Reasoning effort: {effort}")
 
     # Detect alternative API mode (Ollama, GLM, or Vertex AI)
@@ -449,54 +450,34 @@ def create_client(
 
     # PROMPT CACHING: The Claude Code CLI applies cache_control breakpoints internally.
     # Our system_prompt benefits from automatic caching without explicit configuration.
-    # If explicit cache_control is needed, the SDK would need to accept content blocks
-    # with cache_control fields (not currently supported in v0.1.x).
-    return ClaudeSDKClient(
-        options=ClaudeAgentOptions(
-            model=model,
-            # SDK 0.1.61's effort Literal omits "xhigh" but the CLI's
-            # --effort flag accepts it; the SDK forwards the string unchanged.
-            effort=effort,  # type: ignore[arg-type]
-            cli_path=system_cli,  # Use system CLI to avoid bundled Bun crash (exit code 3)
-            system_prompt="You are an expert full-stack developer building a production-quality web application.",
-            setting_sources=["project"],  # Enable skills, commands, and CLAUDE.md from project dir
-            max_buffer_size=10 * 1024 * 1024,  # 10MB for large Playwright screenshots
-            allowed_tools=allowed_tools,
-            mcp_servers=mcp_servers,  # type: ignore[arg-type]  # SDK accepts dict config at runtime
-            hooks={
-                "PreToolUse": [
-                    HookMatcher(matcher="Bash", hooks=[bash_hook_with_context]),
-                ],
-                # PreCompact hook for context management during long sessions.
-                # Compaction is automatic when context approaches token limits.
-                # This hook logs compaction events and can customize summarization.
-                "PreCompact": [
-                    HookMatcher(hooks=[pre_compact_hook]),
-                ],
-            },
-            max_turns=max_turns,
-            cwd=str(project_dir.resolve()),
-            settings=str(settings_file.resolve()),  # Use absolute path
-            env=sdk_env,  # Pass API configuration overrides to CLI subprocess
-            # Enable extended context beta for better handling of long sessions.
-            # This provides up to 1M tokens of context with automatic compaction.
-            # See: https://docs.anthropic.com/en/api/beta-headers
-            # Disabled for alternative APIs (Ollama, GLM, Vertex AI) as they don't support this beta.
-            betas=[] if is_alternative_api else ["context-1m-2025-08-07"],
-            # Note on context management:
-            # The Claude Agent SDK handles context management automatically through the
-            # underlying Claude Code CLI. When context approaches limits, the CLI
-            # automatically compacts/summarizes previous messages.
-            #
-            # The SDK does NOT expose explicit compaction_control or context_management
-            # parameters. Instead, context is managed via:
-            # 1. betas=["context-1m-2025-08-07"] - Extended context window
-            # 2. PreCompact hook - Intercept and customize compaction behavior
-            # 3. max_turns - Limit conversation turns (per agent type: coding=300, testing=100)
-            #
-            # Future SDK versions may add explicit compaction controls. When available,
-            # consider adding:
-            # - compaction_control={"enabled": True, "context_token_threshold": 80000}
-            # - context_management={"edits": [...]} for tool use clearing
-        )
+    #
+    # Context management is handled by the engine (for Claude: automatic
+    # compaction by the CLI, customized via the PreCompact hook above, bounded
+    # by max_turns per agent type: coding=300, testing=100, initializer=300).
+    options = EngineOptions(
+        model=model,
+        effort=effort,
+        system_prompt="You are an expert full-stack developer building a production-quality web application.",
+        setting_sources=["project"],  # Enable skills, commands, and CLAUDE.md from project dir
+        max_buffer_size=10 * 1024 * 1024,  # 10MB for large Playwright screenshots
+        allowed_tools=allowed_tools,
+        mcp_servers=mcp_servers,
+        hooks={
+            "PreToolUse": [
+                HookMatcher(matcher="Bash", hooks=[bash_hook_with_context]),
+            ],
+            # PreCompact hook for context management during long sessions.
+            # Compaction is automatic when context approaches token limits.
+            "PreCompact": [
+                HookMatcher(hooks=[pre_compact_hook]),
+            ],
+        },
+        max_turns=max_turns,
+        cwd=str(project_dir.resolve()),
+        settings=str(settings_file.resolve()),  # Use absolute path
+        env=sdk_env,  # Pass API configuration overrides to CLI subprocess
+        # Extended context beta (1M tokens). Disabled for alternative APIs
+        # (Ollama, GLM, Vertex AI) as they don't support this beta.
+        betas=[] if is_alternative_api else ["context-1m-2025-08-07"],
     )
+    return create_engine_client(engine_config.engine, options)
