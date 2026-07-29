@@ -16,6 +16,7 @@
     "api/",
     "server/",
     "mcp_server/",
+    "engines/",
     "ui/dist/",
     "ui/package.json",
     ".claude/commands/",
