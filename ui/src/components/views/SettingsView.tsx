@@ -1,9 +1,8 @@
 /**
  * Settings View
  *
- * Full-page settings view with the same controls as SettingsModal,
- * rendered in a scrollable centered layout with Card-based section
- * groupings instead of inside a Dialog.
+ * Full-page settings view rendered in a scrollable centered layout
+ * with Card-based section groupings.
  */
 
 import { useState } from 'react'
@@ -20,8 +19,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
 const PROVIDER_INFO_TEXT: Record<string, string> = {
   claude: 'Default provider. Uses Claude CLI credentials. API key auth is recommended.',
-  kimi: 'Get an API key at kimi.com',
+  kimi: 'Kimi Code subscription (K3 models). Create an API key in the Kimi Code Console at kimi.com/code',
   glm: 'Get an API key at open.bigmodel.cn',
+  azure: 'Anthropic models on Azure AI Foundry. Set your resource base URL and API key.',
   ollama: 'Run models locally. Install from ollama.com',
   custom: 'Connect to any OpenAI-compatible API endpoint.',
 }
@@ -361,20 +361,20 @@ export function SettingsView() {
                 <div className="space-y-2">
                   <Label className="font-medium">Model</Label>
                   {models.length > 0 && (
-                    <div className="flex rounded-lg border overflow-hidden">
+                    <div className={`grid gap-1.5 ${models.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
                       {models.map((model) => (
                         <button
                           key={model.id}
                           onClick={() => handleModelChange(model.id)}
                           disabled={isSaving}
-                          className={`flex-1 py-2 px-3 text-sm font-medium transition-colors ${
+                          className={`py-2 px-3 text-sm font-medium rounded-md border transition-colors text-left ${
                             (settings.api_model ?? settings.model) === model.id
-                              ? 'bg-primary text-primary-foreground'
-                              : 'bg-background text-foreground hover:bg-muted'
+                              ? 'bg-primary text-primary-foreground border-primary'
+                              : 'bg-background text-foreground border-border hover:bg-muted'
                           } ${isSaving ? 'opacity-50 cursor-not-allowed' : ''}`}
                         >
-                          <span className="block">{model.name}</span>
-                          <span className="block text-xs opacity-60">{model.id}</span>
+                          <span className="block truncate">{model.name}</span>
+                          <span className="block text-xs opacity-60 truncate">{model.id}</span>
                         </button>
                       ))}
                     </div>

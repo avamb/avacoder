@@ -57,6 +57,8 @@ LEGACY_MODEL_MAP = {
     "claude-opus-4-6": "claude-opus-4-7",
     "claude-sonnet-4-5": "claude-sonnet-4-6",
     "claude-sonnet-4-5-20250929": "claude-sonnet-4-6",
+    # Kimi Code renamed its subscription models when K3 shipped (July 2026)
+    "kimi-k2.5": "k3-256k",
 }
 
 # List of valid model IDs (derived from AVAILABLE_MODELS)
@@ -786,12 +788,17 @@ API_PROVIDERS: dict[str, dict[str, Any]] = {
         "default_model": "claude-opus-4-7",
     },
     "kimi": {
-        "name": "Kimi K2.5 (Moonshot)",
+        "name": "Kimi Code (Moonshot)",
         "base_url": "https://api.kimi.com/coding/",
         "requires_auth": True,
         "auth_env_var": "ANTHROPIC_API_KEY",
-        "models": [{"id": "kimi-k2.5", "name": "Kimi K2.5"}],
-        "default_model": "kimi-k2.5",
+        "models": [
+            {"id": "k3-256k", "name": "Kimi K3 (256K)"},
+            {"id": "k3[1m]", "name": "Kimi K3 (1M context)"},
+            {"id": "kimi-for-coding", "name": "Kimi for Coding"},
+            {"id": "kimi-for-coding-highspeed", "name": "Kimi for Coding (High Speed)"},
+        ],
+        "default_model": "k3-256k",
     },
     "glm": {
         "name": "GLM (Zhipu AI)",
@@ -905,6 +912,14 @@ def get_effective_sdk_env() -> dict[str, str]:
         sdk_env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = model
         sdk_env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = model
         sdk_env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = model
+
+    # Kimi Code: the docs require the CLI context window to match the selected model
+    # (https://www.kimi.com/code/docs/en/third-party-tools/claude-code.html).
+    # "[1m]" model variants get the 1M window, everything else the 256K window.
+    if provider_id == "kimi" and model:
+        context_tokens = "1048576" if "[1m]" in model else "262144"
+        sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = context_tokens
+        sdk_env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = context_tokens
 
     # Timeout
     timeout = all_settings.get("api_timeout_ms")

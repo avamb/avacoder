@@ -25,4 +25,7 @@ API_ENV_VARS: list[str] = [
     "CLAUDE_CODE_USE_VERTEX",          # Enable Vertex AI mode (set to "1")
     "CLOUD_ML_REGION",                 # GCP region (e.g., us-east5)
     "ANTHROPIC_VERTEX_PROJECT_ID",     # GCP project ID
+    # Context window overrides (required by Kimi Code, harmless elsewhere)
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS",  # Context window size for the CLI
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW", # Auto-compact threshold matching the window
 ]
