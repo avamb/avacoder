@@ -1,4 +1,7 @@
 claude-agent-sdk>=0.1.39,<0.2.0
+# Codex engine (ChatGPT subscription): official beta SDK, bundles its own
+# codex app-server runtime; pinned tightly because the API is still beta.
+openai-codex>=0.144.4,<0.145.0
 python-dotenv>=1.0.0
 sqlalchemy>=2.0.0
 fastapi>=0.115.0

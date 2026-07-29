@@ -796,6 +796,22 @@ API_PROVIDERS: dict[str, dict[str, Any]] = {
         ],
         "default_model": "claude-opus-4-7",
     },
+    "codex": {
+        "name": "Codex (ChatGPT subscription)",
+        "engine": "codex",
+        "auth_mode": "subscription",  # no token field in UI; login via `codex login`
+        "base_url": None,
+        "requires_auth": False,
+        "models": [
+            {"id": "gpt-5.6-sol", "name": "GPT-5.6-Sol"},
+            {"id": "gpt-5.6-terra", "name": "GPT-5.6-Terra"},
+            {"id": "gpt-5.6-luna", "name": "GPT-5.6-Luna"},
+            {"id": "gpt-5.5", "name": "GPT-5.5"},
+            {"id": "gpt-5.4", "name": "GPT-5.4"},
+            {"id": "gpt-5.4-mini", "name": "GPT-5.4-Mini"},
+        ],
+        "default_model": "gpt-5.6-sol",
+    },
     "kimi": {
         "name": "Kimi Code (Moonshot)",
         "engine": "claude",
@@ -862,6 +878,45 @@ API_PROVIDERS: dict[str, dict[str, Any]] = {
         "default_model": "",
     },
 }
+
+
+def _refresh_codex_models_from_cache() -> None:
+    """Refresh the codex provider's model list from the local Codex CLI cache.
+
+    The Codex CLI keeps ~/.codex/models_cache.json up to date with the
+    models available to the logged-in ChatGPT subscription.  Reading it at
+    import protects against model-list drift (gpt-5.6 -> gpt-5.7...) without
+    a network call.  Only models with visibility == "list" are shown (the
+    cache also carries hidden internal models like codex-auto-review).
+    Any failure leaves the static list above untouched.
+    """
+    try:
+        codex_home = os.environ.get("CODEX_HOME")
+        cache_path = (
+            Path(codex_home) if codex_home else Path.home() / ".codex"
+        ) / "models_cache.json"
+        if not cache_path.exists():
+            return
+        with open(cache_path, encoding="utf-8") as f:
+            cache = json.load(f)
+        models = []
+        for entry in cache.get("models", []):
+            if not isinstance(entry, dict) or entry.get("visibility") != "list":
+                continue
+            slug = entry.get("slug")
+            if not slug:
+                continue
+            models.append({"id": slug, "name": entry.get("display_name") or slug})
+        if not models:
+            return
+        API_PROVIDERS["codex"]["models"] = models
+        if API_PROVIDERS["codex"]["default_model"] not in {m["id"] for m in models}:
+            API_PROVIDERS["codex"]["default_model"] = models[0]["id"]
+    except Exception as e:  # noqa: BLE001 - cache refresh must never break startup
+        logger.debug("Could not refresh codex models from CLI cache: %s", e)
+
+
+_refresh_codex_models_from_cache()
 
 
 def get_effective_sdk_env() -> dict[str, str]:

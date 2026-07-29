@@ -215,26 +215,65 @@ async def health_check():
 
 @app.get("/api/setup/status", response_model=SetupStatus)
 async def setup_status():
-    """Check system setup status."""
-    # Check for Claude CLI
-    claude_cli = shutil.which("claude") is not None
+    """Check system setup status (engine-aware).
 
-    # Check for CLI configuration directory
-    # Note: CLI no longer stores credentials in ~/.claude/.credentials.json
-    # The existence of ~/.claude indicates the CLI has been configured
-    claude_dir = Path.home() / ".claude"
-    has_claude_config = claude_dir.exists() and claude_dir.is_dir()
+    For claude-engine providers this checks the Claude CLI + its config;
+    when the selected provider runs on the codex engine, the CLI and
+    credential checks target the Codex runtime and ~/.codex/auth.json
+    (ChatGPT subscription login) instead.
+    """
+    # Resolve the active provider's engine ("claude" unless codex selected)
+    engine = "claude"
+    try:
+        from registry import API_PROVIDERS, get_all_settings
 
-    # If GLM mode is configured via .env, we have alternative credentials
-    glm_configured = bool(os.getenv("ANTHROPIC_BASE_URL") and os.getenv("ANTHROPIC_AUTH_TOKEN"))
-    credentials = has_claude_config or glm_configured
+        provider_id = get_all_settings().get("api_provider", "claude")
+        engine = API_PROVIDERS.get(provider_id, {}).get("engine", "claude")
+    except Exception:
+        logger.warning("Could not resolve provider engine for setup status", exc_info=True)
+
+    if engine == "codex":
+        # Codex engine: runtime is either the SDK-bundled app-server binary
+        # or the system codex CLI; credentials come from `codex login`.
+        try:
+            from engines.codex_engine import find_system_codex
+
+            codex_on_path = find_system_codex() is not None
+        except Exception:
+            codex_on_path = shutil.which("codex") is not None
+        try:
+            from codex_cli_bin import bundled_codex_path  # openai-codex SDK runtime
+
+            has_bundled = Path(bundled_codex_path()).exists()
+        except Exception:
+            has_bundled = False
+
+        cli_available = codex_on_path or has_bundled
+        codex_home = os.getenv("CODEX_HOME")
+        auth_file = (Path(codex_home) if codex_home else Path.home() / ".codex") / "auth.json"
+        credentials = auth_file.exists()
+    else:
+        # Claude engine (default): check for Claude CLI
+        cli_available = shutil.which("claude") is not None
+
+        # Check for CLI configuration directory
+        # Note: CLI no longer stores credentials in ~/.claude/.credentials.json
+        # The existence of ~/.claude indicates the CLI has been configured
+        claude_dir = Path.home() / ".claude"
+        has_claude_config = claude_dir.exists() and claude_dir.is_dir()
+
+        # If GLM mode is configured via .env, we have alternative credentials
+        glm_configured = bool(
+            os.getenv("ANTHROPIC_BASE_URL") and os.getenv("ANTHROPIC_AUTH_TOKEN")
+        )
+        credentials = has_claude_config or glm_configured
 
     # Check for Node.js and npm
     node = shutil.which("node") is not None
     npm = shutil.which("npm") is not None
 
     return SetupStatus(
-        claude_cli=claude_cli,
+        claude_cli=cli_available,
         credentials=credentials,
         node=node,
         npm=npm,

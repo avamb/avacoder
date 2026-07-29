@@ -9,7 +9,8 @@ Engines:
     claude  - Claude Code CLI via claude-agent-sdk (default; also used by all
               Anthropic-compatible HTTP providers: GLM, Kimi, Ollama, Azure,
               Custom)
-    codex   - OpenAI Codex CLI (planned; see docs/ENGINE_ADAPTER_PLAN.md)
+    codex   - OpenAI Codex app-server via the openai-codex SDK
+              (ChatGPT subscription; see docs/ENGINE_ADAPTER_PLAN.md)
 """
 
 from .types import EngineConfig, EngineOptions
@@ -29,11 +30,9 @@ def create_engine_client(engine: str, options: EngineOptions):
 
         return claude_engine.create_client(options)
     if engine == "codex":
-        raise NotImplementedError(
-            "The Codex engine is not implemented yet (Phase 3 of "
-            "docs/ENGINE_ADAPTER_PLAN.md). Select a Claude-engine provider "
-            "in Settings."
-        )
+        from . import codex_engine
+
+        return codex_engine.create_client(options)
     raise ValueError(f"Unknown engine '{engine}'. Known engines: {KNOWN_ENGINES}")
 
 
