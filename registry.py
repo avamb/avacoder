@@ -6,6 +6,7 @@ Cross-platform project registry for storing project name to path mappings.
 Uses SQLite database stored at ~/.autoforge/registry.db.
 """
 
+import json
 import logging
 import os
 import re
@@ -988,3 +989,51 @@ def get_effective_engine_config():
         effort=get_effort_setting(),
         env=env,
     )
+
+
+def get_model_routing() -> dict[int, str]:
+    """Read the per-complexity model routing table from settings.
+
+    The "model_routing" setting stores a JSON object mapping complexity level
+    ("1" = simple, "2" = standard, "3" = complex) to a model id of the current
+    provider. Empty values mean "use the default model". Entries that don't
+    match the current provider's model list are dropped (protects against a
+    stale routing table after a provider switch).
+
+    Returns:
+        Dict mapping complexity (int 1-3) to model id. Missing levels fall
+        back to the run's default model at the call site.
+    """
+    all_settings = get_all_settings()
+    raw = all_settings.get("model_routing")
+    if not raw:
+        return {}
+
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        logger.warning("Ignoring malformed model_routing setting: %r", raw)
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+
+    provider_id = all_settings.get("api_provider", "claude")
+    provider = API_PROVIDERS.get(provider_id, API_PROVIDERS["claude"])
+    if provider_id == "claude":
+        known_models = set(VALID_MODELS)
+    else:
+        known_models = {m["id"] for m in provider.get("models", [])}
+
+    routing: dict[int, str] = {}
+    for key, value in parsed.items():
+        if key not in ("1", "2", "3") or not isinstance(value, str) or not value:
+            continue
+        # Custom/Ollama providers allow free-text models; skip the check there
+        if known_models and value not in known_models:
+            logger.warning(
+                "model_routing: '%s' is not a model of provider '%s', ignoring",
+                value, provider_id,
+            )
+            continue
+        routing[int(key)] = value
+    return routing

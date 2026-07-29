@@ -144,6 +144,7 @@ feature_create_bulk(features=[
     "category": "functional",
     "name": "Brief feature name",
     "description": "What this feature tests and how to verify it works",
+    "complexity": 2,
     "steps": [
       "Step 1: Action to take",
       "Step 2: Expected result",
@@ -154,6 +155,7 @@ feature_create_bulk(features=[
     "category": "style",
     "name": "Another feature name",
     "description": "Description of visual/style requirement",
+    "complexity": 1,
     "steps": [
       "Step 1: Navigate to page",
       "Step 2: Check visual element",
@@ -168,6 +170,9 @@ feature_create_bulk(features=[
 - Use valid JSON (double quotes, no trailing commas)
 - Include ALL features you promised to create
 - Each feature needs: category, name, description, steps (array of strings)
+- Also set `complexity` per feature: 1 = simple (isolated change, static UI),
+  2 = standard (default), 3 = complex (cross-cutting, integrations, tricky logic).
+  It routes the feature to an appropriately strong model.
 - The tool will return the count of created features - verify it matches your expected count
 
 ---

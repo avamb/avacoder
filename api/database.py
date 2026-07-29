@@ -55,6 +55,9 @@ class Feature(Base):
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=False)
     steps = Column(JSON, nullable=False)  # Stored as JSON array
+    # Complexity rating: 1 = simple, 2 = standard, 3 = complex.
+    # Used for per-feature model routing (see registry.get_model_routing).
+    complexity = Column(Integer, nullable=False, default=2)
     passes = Column(Boolean, nullable=False, default=False, index=True)
     in_progress = Column(Boolean, nullable=False, default=False, index=True)
     # Dependencies: list of feature IDs that must be completed before this feature
@@ -75,6 +78,8 @@ class Feature(Base):
             "name": self.name,
             "description": self.description,
             "steps": self.steps,
+            # Legacy rows (pre-migration) may have NULL - treat as standard
+            "complexity": self.complexity if self.complexity is not None else 2,
             # Handle legacy NULL values gracefully - treat as False
             "passes": self.passes if self.passes is not None else False,
             "in_progress": self.in_progress if self.in_progress is not None else False,
@@ -242,6 +247,20 @@ def _migrate_add_dependencies_column(engine) -> None:
         if "dependencies" not in columns:
             # Use TEXT for SQLite JSON storage, NULL default for backwards compat
             conn.execute(text("ALTER TABLE features ADD COLUMN dependencies TEXT DEFAULT NULL"))
+            conn.commit()
+
+
+def _migrate_add_complexity_column(engine) -> None:
+    """Add complexity column to existing databases that don't have it.
+
+    Defaults to 2 (standard) so legacy features route to the default model.
+    """
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(features)"))
+        columns = [row[1] for row in result.fetchall()]
+
+        if "complexity" not in columns:
+            conn.execute(text("ALTER TABLE features ADD COLUMN complexity INTEGER NOT NULL DEFAULT 2"))
             conn.commit()
 
 
@@ -448,6 +467,7 @@ def create_database(project_dir: Path) -> tuple:
     _migrate_add_in_progress_column(engine)
     _migrate_fix_null_boolean_fields(engine)
     _migrate_add_dependencies_column(engine)
+    _migrate_add_complexity_column(engine)
     _migrate_add_testing_columns(engine)
     _migrate_add_human_input_columns(engine)
 

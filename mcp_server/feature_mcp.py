@@ -85,6 +85,7 @@ class FeatureCreateItem(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, description="Feature name")
     description: str = Field(..., min_length=1, description="Detailed description")
     steps: list[str] = Field(..., min_length=1, description="Implementation/test steps")
+    complexity: int = Field(2, ge=1, le=3, description="Complexity rating: 1=simple, 2=standard, 3=complex")
 
 
 class BulkCreateInput(BaseModel):
@@ -549,6 +550,10 @@ def feature_create_bulk(
             - name (str): Feature name
             - description (str): Detailed description
             - steps (list[str]): Implementation/test steps
+            - complexity (int, optional): Implementation complexity rating used
+              for model routing: 1 = simple (isolated change, standard CRUD),
+              2 = standard (default), 3 = complex (cross-cutting, architectural,
+              tricky algorithms/integrations).
             - depends_on_indices (list[int], optional): Array indices (0-based) of
               features in THIS batch that this feature depends on. Use this instead
               of 'dependencies' since IDs aren't known until after creation.
@@ -572,6 +577,13 @@ def feature_create_bulk(
                 if not all(key in feature_data for key in ["category", "name", "description", "steps"]):
                     return json.dumps({
                         "error": f"Feature at index {i} missing required fields (category, name, description, steps)"
+                    })
+
+                # Validate optional complexity rating
+                complexity = feature_data.get("complexity", 2)
+                if not isinstance(complexity, int) or complexity not in (1, 2, 3):
+                    return json.dumps({
+                        "error": f"Feature at index {i} has invalid complexity {complexity!r} (must be 1, 2, or 3)"
                     })
 
                 # Validate depends_on_indices
@@ -607,6 +619,7 @@ def feature_create_bulk(
                     name=feature_data["name"],
                     description=feature_data["description"],
                     steps=feature_data["steps"],
+                    complexity=feature_data.get("complexity", 2),
                     passes=False,
                     in_progress=False,
                 )
@@ -640,7 +653,8 @@ def feature_create(
     category: Annotated[str, Field(min_length=1, max_length=100, description="Feature category (e.g., 'Authentication', 'API', 'UI')")],
     name: Annotated[str, Field(min_length=1, max_length=255, description="Feature name")],
     description: Annotated[str, Field(min_length=1, description="Detailed description of the feature")],
-    steps: Annotated[list[str], Field(min_length=1, description="List of implementation/verification steps")]
+    steps: Annotated[list[str], Field(min_length=1, description="List of implementation/verification steps")],
+    complexity: Annotated[int, Field(ge=1, le=3, description="Complexity rating for model routing: 1=simple, 2=standard, 3=complex")] = 2
 ) -> str:
     """Create a single feature in the project backlog.
 
@@ -652,6 +666,8 @@ def feature_create(
         name: Descriptive name for the feature
         description: Detailed description of what this feature should do
         steps: List of steps to implement or verify the feature
+        complexity: 1 = simple (isolated change), 2 = standard (default),
+            3 = complex (cross-cutting or architecturally tricky)
 
     Returns:
         JSON with the created feature details including its ID
@@ -671,6 +687,7 @@ def feature_create(
                 name=name,
                 description=description,
                 steps=steps,
+                complexity=complexity,
                 passes=False,
                 in_progress=False,
             )

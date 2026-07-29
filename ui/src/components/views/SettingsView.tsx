@@ -50,6 +50,18 @@ export function SettingsView() {
     }
   }
 
+  const handleRoutingChange = (level: '1' | '2' | '3', modelId: string) => {
+    if (!updateSettings.isPending && settings) {
+      const routing = { ...(settings.model_routing ?? {}) }
+      if (modelId) {
+        routing[level] = modelId
+      } else {
+        delete routing[level]
+      }
+      updateSettings.mutate({ model_routing: routing })
+    }
+  }
+
   const handleTestingRatioChange = (ratio: number) => {
     if (!updateSettings.isPending) {
       updateSettings.mutate({ testing_agent_ratio: ratio })
@@ -400,6 +412,41 @@ export function SettingsView() {
                     </div>
                   )}
                 </div>
+
+                {/* Model Routing by Complexity */}
+                {models.length > 1 && (
+                  <div className="space-y-2 pt-2">
+                    <Label className="font-medium">Model Routing by Complexity</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Route features to different models based on their complexity rating.
+                      Leave empty to use the default model above.
+                    </p>
+                    <div className="space-y-1.5">
+                      {([
+                        ['1', 'Simple features'],
+                        ['2', 'Standard features'],
+                        ['3', 'Complex features'],
+                      ] as const).map(([level, label]) => (
+                        <div key={level} className="flex items-center gap-2">
+                          <span className="text-sm w-36 shrink-0">{label}</span>
+                          <select
+                            value={settings.model_routing?.[level] ?? ''}
+                            onChange={(e) => handleRoutingChange(level, e.target.value)}
+                            disabled={isSaving}
+                            className="flex-1 py-1.5 px-2 text-sm border rounded-md bg-background"
+                          >
+                            <option value="">Default model</option>
+                            {models.map((model) => (
+                              <option key={model.id} value={model.id}>
+                                {model.name} ({model.id})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 

@@ -6,6 +6,7 @@ API endpoints for global settings management.
 Settings are stored in the registry database and shared across all projects.
 """
 
+import json
 import mimetypes
 import sys
 
@@ -100,6 +101,19 @@ def _parse_bool(value: str | None, default: bool = False) -> bool:
 
 
 
+def _parse_model_routing(raw: str | None) -> dict[str, str]:
+    """Parse the stored model_routing JSON, tolerating malformed values."""
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {k: v for k, v in parsed.items() if k in ("1", "2", "3") and isinstance(v, str)}
+
+
 @router.get("", response_model=SettingsResponse)
 async def get_settings():
     """Get current global settings."""
@@ -124,6 +138,7 @@ async def get_settings():
         api_base_url=all_settings.get("api_base_url"),
         api_has_auth_token=bool(all_settings.get("api_auth_token")),
         api_model=all_settings.get("api_model"),
+        model_routing=_parse_model_routing(all_settings.get("model_routing")),
     )
 
 
@@ -166,6 +181,9 @@ async def update_settings(update: SettingsUpdate):
                 # Auto-set model to provider's default
                 if provider.get("default_model") and update.api_model is None:
                     set_setting("api_model", provider["default_model"])
+                # Reset routing - it references the old provider's model ids
+                if update.model_routing is None:
+                    set_setting("model_routing", "{}")
 
     if update.api_base_url is not None:
         set_setting("api_base_url", update.api_base_url)
@@ -175,6 +193,11 @@ async def update_settings(update: SettingsUpdate):
 
     if update.api_model is not None:
         set_setting("api_model", update.api_model)
+
+    if update.model_routing is not None:
+        # Drop empty values so the stored JSON stays compact (VARCHAR(500))
+        routing = {k: v for k, v in update.model_routing.items() if v}
+        set_setting("model_routing", json.dumps(routing))
 
     # Return updated settings
     all_settings = get_all_settings()
@@ -196,4 +219,5 @@ async def update_settings(update: SettingsUpdate):
         api_base_url=all_settings.get("api_base_url"),
         api_has_auth_token=bool(all_settings.get("api_auth_token")),
         api_model=all_settings.get("api_model"),
+        model_routing=_parse_model_routing(all_settings.get("model_routing")),
     )

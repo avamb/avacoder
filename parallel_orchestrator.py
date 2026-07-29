@@ -176,6 +176,16 @@ class ParallelOrchestrator:
         self.project_dir = project_dir
         self.max_concurrency = min(max(max_concurrency, 1), MAX_PARALLEL_AGENTS)
         self.model = model
+        # Per-complexity model routing (complexity 1-3 -> model id). Loaded from
+        # settings; empty dict means all features use self.model.
+        try:
+            from registry import get_model_routing
+            self.model_routing: dict[int, str] = get_model_routing()
+        except Exception:
+            logger.warning("Failed to load model routing, using default model", exc_info=True)
+            self.model_routing = {}
+        if self.model_routing:
+            logger.info("Model routing active: %s", self.model_routing)
         self.yolo_mode = yolo_mode
         self.testing_agent_ratio = min(max(testing_agent_ratio, 0), 3)  # Clamp 0-3
         self.testing_batch_size = min(max(testing_batch_size, 1), 15)  # Clamp 1-15
@@ -231,6 +241,17 @@ class ParallelOrchestrator:
     def get_session(self):
         """Get a new database session."""
         return self._session_maker()
+
+    def _resolve_model(self, complexities: list[int]) -> str | None:
+        """Pick the model for a set of features via the routing table.
+
+        A batch runs on the model routed for its *highest* complexity member
+        (stronger model wins). Levels without a routing entry fall back to the
+        run's default model.
+        """
+        if not self.model_routing or not complexities:
+            return self.model
+        return self.model_routing.get(max(complexities)) or self.model
 
     def _get_random_passing_feature(self) -> int | None:
         """Get a random passing feature for regression testing (no claim needed).
@@ -731,6 +752,7 @@ class ParallelOrchestrator:
                 return False, "Feature not found"
             if feature.passes:
                 return False, "Feature already complete"
+            complexity = feature.complexity if feature.complexity is not None else 2
 
             if resume:
                 # Resuming: feature should already be in_progress
@@ -745,8 +767,10 @@ class ParallelOrchestrator:
         finally:
             session.close()
 
-        # Start coding agent subprocess
-        success, message = self._spawn_coding_agent(feature_id)
+        # Start coding agent subprocess with the complexity-routed model
+        success, message = self._spawn_coding_agent(
+            feature_id, model=self._resolve_model([complexity])
+        )
         if not success:
             return False, message
 
@@ -787,12 +811,14 @@ class ParallelOrchestrator:
         session = self.get_session()
         try:
             features_to_mark = []
+            complexities: list[int] = []
             for fid in feature_ids:
                 feature = session.query(Feature).filter(Feature.id == fid).first()
                 if not feature:
                     return False, f"Feature {fid} not found"
                 if feature.passes:
                     return False, f"Feature {fid} already complete"
+                complexities.append(feature.complexity if feature.complexity is not None else 2)
                 if not resume:
                     if feature.in_progress:
                         return False, f"Feature {fid} already in progress"
@@ -807,8 +833,10 @@ class ParallelOrchestrator:
         finally:
             session.close()
 
-        # Spawn batch coding agent
-        success, message = self._spawn_coding_agent_batch(feature_ids)
+        # Spawn batch coding agent with the complexity-routed model
+        success, message = self._spawn_coding_agent_batch(
+            feature_ids, model=self._resolve_model(complexities)
+        )
         if not success:
             # Clear in_progress on failure
             session = self.get_session()
@@ -824,8 +852,13 @@ class ParallelOrchestrator:
 
         return True, f"Started batch [{', '.join(str(fid) for fid in feature_ids)}]"
 
-    def _spawn_coding_agent(self, feature_id: int) -> tuple[bool, str]:
-        """Spawn a coding agent subprocess for a specific feature."""
+    def _spawn_coding_agent(self, feature_id: int, model: str | None = None) -> tuple[bool, str]:
+        """Spawn a coding agent subprocess for a specific feature.
+
+        Args:
+            feature_id: Feature to implement
+            model: Model override (from complexity routing); None = default
+        """
         # Create abort event
         abort_event = threading.Event()
 
@@ -839,8 +872,11 @@ class ParallelOrchestrator:
             "--agent-type", "coding",
             "--feature-id", str(feature_id),
         ]
-        if self.model:
-            cmd.extend(["--model", self.model])
+        agent_model = model or self.model
+        if agent_model:
+            cmd.extend(["--model", agent_model])
+            if model and model != self.model:
+                print(f"Feature #{feature_id}: routed to model {model}", flush=True)
         if self.yolo_mode:
             cmd.append("--yolo")
 
@@ -891,8 +927,13 @@ class ParallelOrchestrator:
         print(f"Started coding agent for feature #{feature_id}", flush=True)
         return True, f"Started feature {feature_id}"
 
-    def _spawn_coding_agent_batch(self, feature_ids: list[int]) -> tuple[bool, str]:
-        """Spawn a coding agent subprocess for a batch of features."""
+    def _spawn_coding_agent_batch(self, feature_ids: list[int], model: str | None = None) -> tuple[bool, str]:
+        """Spawn a coding agent subprocess for a batch of features.
+
+        Args:
+            feature_ids: Features to implement in one session
+            model: Model override (from complexity routing); None = default
+        """
         primary_id = feature_ids[0]
         abort_event = threading.Event()
 
@@ -905,8 +946,11 @@ class ParallelOrchestrator:
             "--agent-type", "coding",
             "--feature-ids", ",".join(str(fid) for fid in feature_ids),
         ]
-        if self.model:
-            cmd.extend(["--model", self.model])
+        agent_model = model or self.model
+        if agent_model:
+            cmd.extend(["--model", agent_model])
+            if model and model != self.model:
+                print(f"Batch [{', '.join(str(f) for f in feature_ids)}]: routed to model {model}", flush=True)
         if self.yolo_mode:
             cmd.append("--yolo")
 

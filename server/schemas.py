@@ -107,6 +107,7 @@ class FeatureBase(BaseModel):
     name: str
     description: str
     steps: list[str]
+    complexity: int = Field(2, ge=1, le=3)  # 1=simple, 2=standard, 3=complex (model routing)
     dependencies: list[int] = Field(default_factory=list)  # Optional dependencies
 
 
@@ -122,6 +123,7 @@ class FeatureUpdate(BaseModel):
     description: str | None = None
     steps: list[str] | None = None
     priority: int | None = None
+    complexity: int | None = Field(None, ge=1, le=3)
     dependencies: list[int] | None = None  # Optional - can update dependencies
 
 
@@ -491,6 +493,9 @@ class SettingsResponse(BaseModel):
     api_base_url: str | None = None
     api_has_auth_token: bool = False  # Never expose actual token
     api_model: str | None = None
+    # Per-complexity model routing: {"1": model_id, "2": ..., "3": ...}
+    # Empty/missing level = use the default model for that complexity
+    model_routing: dict[str, str] = Field(default_factory=dict)
 
 
 class ModelsResponse(BaseModel):
@@ -512,6 +517,18 @@ class SettingsUpdate(BaseModel):
     api_base_url: str | None = Field(None, max_length=500)
     api_auth_token: str | None = Field(None, max_length=500)  # Write-only, never returned
     api_model: str | None = Field(None, max_length=200)
+    model_routing: dict[str, str] | None = None
+
+    @field_validator('model_routing')
+    @classmethod
+    def validate_model_routing(cls, v: dict[str, str] | None) -> dict[str, str] | None:
+        if v is not None:
+            for key, value in v.items():
+                if key not in ("1", "2", "3"):
+                    raise ValueError("model_routing keys must be '1', '2', or '3'")
+                if not isinstance(value, str) or len(value) > 200:
+                    raise ValueError("model_routing values must be model id strings (max 200 chars)")
+        return v
 
     @field_validator('api_provider')
     @classmethod

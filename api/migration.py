@@ -81,6 +81,7 @@ def migrate_json_to_sqlite(
                 name=feature_dict.get("name", f"Feature {i + 1}"),
                 description=feature_dict.get("description", ""),
                 steps=feature_dict.get("steps", []),
+                complexity=feature_dict.get("complexity", 2),
                 passes=feature_dict.get("passes", False),
                 in_progress=feature_dict.get("in_progress", False),
                 dependencies=feature_dict.get("dependencies"),

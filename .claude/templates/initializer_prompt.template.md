@@ -32,6 +32,20 @@ Use the feature_create_bulk tool to add all features at once. You can create fea
 - IDs and priorities are assigned automatically based on order
 - All features start with `passes: false` by default
 
+**Complexity rating (MANDATORY for every feature):**
+
+Set a `complexity` field on each feature. It controls which model implements it
+(simple features can run on faster/cheaper models):
+
+- `1` = **simple**: isolated change, standard CRUD form/list, static UI element,
+  styling tweak, straightforward validation
+- `2` = **standard** (default): typical feature touching a few files, common
+  business logic, API endpoint + UI wiring
+- `3` = **complex**: cross-cutting or architectural work, tricky algorithms,
+  real-time/concurrency, third-party integrations, infrastructure features
+
+Infrastructure features (indices 0-4) are always `complexity: 3`.
+
 **Requirements for features:**
 
 - Feature count must match the `feature_count` specified in app_spec.txt
@@ -84,31 +98,31 @@ Create WIDE dependency graphs, not linear chains:
 ```json
 [
   // INFRASTRUCTURE TIER (indices 0-4, no dependencies) - MUST run first
-  { "name": "Database connection established", "category": "functional" },
-  { "name": "Database schema applied correctly", "category": "functional" },
-  { "name": "Data persists across server restart", "category": "functional" },
-  { "name": "No mock data patterns in codebase", "category": "functional" },
-  { "name": "Backend API queries real database", "category": "functional" },
+  { "name": "Database connection established", "category": "functional", "complexity": 3 },
+  { "name": "Database schema applied correctly", "category": "functional", "complexity": 3 },
+  { "name": "Data persists across server restart", "category": "functional", "complexity": 3 },
+  { "name": "No mock data patterns in codebase", "category": "functional", "complexity": 3 },
+  { "name": "Backend API queries real database", "category": "functional", "complexity": 3 },
 
   // FOUNDATION TIER (indices 5-7, depend on infrastructure)
-  { "name": "App loads without errors", "category": "functional", "depends_on_indices": [0, 1, 2, 3, 4] },
-  { "name": "Navigation bar displays", "category": "style", "depends_on_indices": [0, 1, 2, 3, 4] },
-  { "name": "Homepage renders correctly", "category": "functional", "depends_on_indices": [0, 1, 2, 3, 4] },
+  { "name": "App loads without errors", "category": "functional", "complexity": 2, "depends_on_indices": [0, 1, 2, 3, 4] },
+  { "name": "Navigation bar displays", "category": "style", "complexity": 1, "depends_on_indices": [0, 1, 2, 3, 4] },
+  { "name": "Homepage renders correctly", "category": "functional", "complexity": 2, "depends_on_indices": [0, 1, 2, 3, 4] },
 
   // AUTH TIER (indices 8-10, depend on foundation + infrastructure)
-  { "name": "User can register", "depends_on_indices": [0, 1, 2, 3, 4, 5] },
-  { "name": "User can login", "depends_on_indices": [0, 1, 2, 3, 4, 5, 8] },
-  { "name": "User can logout", "depends_on_indices": [0, 1, 2, 3, 4, 9] },
+  { "name": "User can register", "complexity": 3, "depends_on_indices": [0, 1, 2, 3, 4, 5] },
+  { "name": "User can login", "complexity": 3, "depends_on_indices": [0, 1, 2, 3, 4, 5, 8] },
+  { "name": "User can logout", "complexity": 2, "depends_on_indices": [0, 1, 2, 3, 4, 9] },
 
   // CORE CRUD TIER (indices 11-14) - WIDE GRAPH: all 4 depend on login
-  { "name": "User can create todo", "depends_on_indices": [0, 1, 2, 3, 4, 9] },
-  { "name": "User can view todos", "depends_on_indices": [0, 1, 2, 3, 4, 9] },
-  { "name": "User can edit todo", "depends_on_indices": [0, 1, 2, 3, 4, 9, 11] },
-  { "name": "User can delete todo", "depends_on_indices": [0, 1, 2, 3, 4, 9, 11] },
+  { "name": "User can create todo", "complexity": 2, "depends_on_indices": [0, 1, 2, 3, 4, 9] },
+  { "name": "User can view todos", "complexity": 1, "depends_on_indices": [0, 1, 2, 3, 4, 9] },
+  { "name": "User can edit todo", "complexity": 2, "depends_on_indices": [0, 1, 2, 3, 4, 9, 11] },
+  { "name": "User can delete todo", "complexity": 1, "depends_on_indices": [0, 1, 2, 3, 4, 9, 11] },
 
   // ADVANCED TIER (indices 15-16) - both depend on view, not each other
-  { "name": "User can filter todos", "depends_on_indices": [0, 1, 2, 3, 4, 12] },
-  { "name": "User can search todos", "depends_on_indices": [0, 1, 2, 3, 4, 12] }
+  { "name": "User can filter todos", "complexity": 1, "depends_on_indices": [0, 1, 2, 3, 4, 12] },
+  { "name": "User can search todos", "complexity": 2, "depends_on_indices": [0, 1, 2, 3, 4, 12] }
 ]
 ```
 

@@ -99,6 +99,7 @@ def feature_to_response(f, passing_ids: set[int] | None = None) -> FeatureRespon
         name=f.name,
         description=f.description,
         steps=f.steps if isinstance(f.steps, list) else [],
+        complexity=getattr(f, 'complexity', None) or 2,
         dependencies=deps,
         # Handle legacy NULL values gracefully - treat as False
         passes=f.passes if f.passes is not None else False,
@@ -203,6 +204,7 @@ async def create_feature(project_name: str, feature: FeatureCreate):
                 name=feature.name,
                 description=feature.description,
                 steps=feature.steps,
+                complexity=feature.complexity,
                 dependencies=feature.dependencies if feature.dependencies else None,
                 passes=False,
                 in_progress=False,
@@ -285,6 +287,7 @@ async def create_features_bulk(project_name: str, bulk: FeatureBulkCreate):
                     name=feature_data.name,
                     description=feature_data.description,
                     steps=feature_data.steps,
+                    complexity=feature_data.complexity,
                     dependencies=feature_data.dependencies if feature_data.dependencies else None,
                     passes=False,
                     in_progress=False,
@@ -465,6 +468,8 @@ async def update_feature(project_name: str, feature_id: int, update: FeatureUpda
                 feature.steps = update.steps
             if update.priority is not None:
                 feature.priority = update.priority
+            if update.complexity is not None:
+                feature.complexity = update.complexity
             if update.dependencies is not None:
                 feature.dependencies = update.dependencies if update.dependencies else None
 

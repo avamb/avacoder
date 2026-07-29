@@ -58,6 +58,14 @@ export function FeatureCard({ feature, onClick, isInProgress, allFeatures = [], 
               {feature.category}
             </Badge>
             <DependencyBadge feature={feature} allFeatures={allFeatures} compact />
+            {feature.complexity != null && feature.complexity !== 2 && (
+              <span
+                className="font-mono text-[10px] text-muted-foreground border rounded px-1"
+                title={feature.complexity === 1 ? 'Simple (routed to light model)' : 'Complex (routed to strong model)'}
+              >
+                {feature.complexity === 1 ? 'C1' : 'C3'}
+              </span>
+            )}
           </div>
           <span className="font-mono text-sm text-muted-foreground">
             #{feature.priority}

@@ -87,6 +87,7 @@ export interface Feature {
   name: string
   description: string
   steps: string[]
+  complexity?: number               // 1=simple, 2=standard, 3=complex (model routing)
   passes: boolean
   in_progress: boolean
   dependencies?: number[]           // Optional for backwards compat
@@ -133,6 +134,7 @@ export interface FeatureCreate {
   description: string
   steps: string[]
   priority?: number
+  complexity?: number
   dependencies?: number[]
 }
 
@@ -142,6 +144,7 @@ export interface FeatureUpdate {
   description?: string
   steps?: string[]
   priority?: number
+  complexity?: number
   dependencies?: number[]
 }
 
@@ -662,6 +665,8 @@ export interface Settings {
   api_base_url: string | null
   api_has_auth_token: boolean
   api_model: string | null
+  /** Per-complexity model routing: {"1": modelId, "2": ..., "3": ...} */
+  model_routing: Record<string, string>
 }
 
 export interface SettingsUpdate {
@@ -675,6 +680,7 @@ export interface SettingsUpdate {
   api_base_url?: string
   api_auth_token?: string
   api_model?: string
+  model_routing?: Record<string, string>
 }
 
 export interface ProjectSettingsUpdate {
