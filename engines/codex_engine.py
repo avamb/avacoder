@@ -443,6 +443,21 @@ class CodexClient:
         disallowed = set(opts.disallowed_tools or [])
         if disallowed & _WRITE_TOOLS or opts.permission_mode == "plan":
             return Sandbox.read_only
+
+        # Coding-agent sessions. On Windows the Claude-path sandbox is not
+        # enforced either (Claude Code sandboxing is a macOS/Linux feature),
+        # and Codex's workspace-write blocks the Docker named pipe with no
+        # config knob - which breaks backend verification (PostgreSQL via
+        # docker compose) and made agents skip features. Default to full
+        # access on Windows for engine parity; POSIX keeps workspace-write.
+        # Override with AUTOFORGE_CODEX_SANDBOX=workspace-write|full-access.
+        override = os.environ.get("AUTOFORGE_CODEX_SANDBOX", "").strip().lower()
+        if override == "workspace-write":
+            return Sandbox.workspace_write
+        if override in ("full-access", "danger-full-access"):
+            return Sandbox.full_access
+        if os.name == "nt":
+            return Sandbox.full_access
         return Sandbox.workspace_write
 
     def _resolve_effort(self) -> Optional[Any]:
