@@ -412,6 +412,24 @@ concurrency; optimize quota instead:
    6) is a direct money saver.
 10. **Integrator/testing agents on the cheap model** - gates are mostly
     command-running; route them to luna by default.
+11. **Subscription failover chain** (user request) - ordered fallback list of
+    providers (e.g. codex -> kimi -> claude), among those with auth configured.
+    Design constraints:
+    - switch only BETWEEN sessions, never mid-feature (work persists in the
+      working tree + notes; a new session on another provider resumes, same as
+      today's rate-limit restarts);
+    - trigger on window exhaustion (long retry-after from the engine error),
+      not on transient 429s; mark the provider cooling-down until its reset
+      time and auto-return to the primary afterwards;
+    - orchestrator holds the active-provider state and passes a per-spawn
+      provider override (--api-provider) to leaf agents; chats keep the primary;
+    - model_routing must become per-provider storage
+      ({"codex": {...}, "kimi": {...}}) instead of resetting on switch.
+12. **Strong model for planning stages** (user request) - feature breakdown,
+    dependencies, and complexity rating determine the whole wave's routing and
+    quality; run them on the strongest model. New "planning model" setting
+    (default: the provider's top model) applied to the initializer agent, spec
+    chat, and expand chat. Implementation mirrors model_routing plumbing.
 
 ## 9. Explicitly out of scope
 
