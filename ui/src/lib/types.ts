@@ -667,6 +667,8 @@ export interface Settings {
   api_model: string | null
   /** Per-complexity model routing: {"1": modelId, "2": ..., "3": ...} */
   model_routing: Record<string, string>
+  /** Model for planning stages (initializer, spec/expand chats); null = provider's strongest */
+  model_planning: string | null
 }
 
 export interface SettingsUpdate {
@@ -681,6 +683,7 @@ export interface SettingsUpdate {
   api_auth_token?: string
   api_model?: string
   model_routing?: Record<string, string>
+  model_planning?: string
 }
 
 export interface ProjectSettingsUpdate {

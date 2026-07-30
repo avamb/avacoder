@@ -309,6 +309,7 @@ const DEFAULT_SETTINGS: Settings = {
   api_has_auth_token: false,
   api_model: null,
   model_routing: {},
+  model_planning: null,
 }
 
 const DEFAULT_PROVIDERS: ProvidersResponse = {

@@ -134,9 +134,12 @@ class SpecChatSession:
         project_path = str(self.project_dir.resolve())
         system_prompt = skill_content.replace("$ARGUMENTS", project_path)
 
-        # Create engine client with limited tools for spec creation
-        from registry import get_effective_engine_config
+        # Create engine client with limited tools for spec creation.
+        # Spec creation is a planning stage: run it on the planning model
+        # (defaults to the provider's strongest model).
+        from registry import get_effective_engine_config, get_planning_model
         engine_config = get_effective_engine_config()
+        planning_model = get_planning_model() or engine_config.model
 
         if engine_config.engine == "claude":
             # Claude CLI: write the system prompt to CLAUDE.md and load it via
@@ -156,7 +159,7 @@ class SpecChatSession:
             self.client = create_engine_client(
                 engine_config.engine,
                 EngineOptions(
-                    model=engine_config.model,
+                    model=planning_model,
                     effort=engine_config.effort,
                     **prompt_kwargs,
                     allowed_tools=[

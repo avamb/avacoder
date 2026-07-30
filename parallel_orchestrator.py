@@ -1113,8 +1113,19 @@ class ParallelOrchestrator:
             "--agent-type", "initializer",
             "--max-iterations", "1",
         ]
-        if self.model:
-            cmd.extend(["--model", self.model])
+        # Planning stages run on the strongest model: the feature breakdown,
+        # dependency graph, and complexity ratings it produces determine the
+        # routing and quality of the whole wave.
+        try:
+            from registry import get_planning_model
+            initializer_model = get_planning_model()
+        except Exception:
+            logger.warning("Failed to resolve planning model", exc_info=True)
+            initializer_model = self.model
+        if initializer_model:
+            cmd.extend(["--model", initializer_model])
+            if initializer_model != self.model:
+                print(f"Initializer: using planning model {initializer_model}", flush=True)
 
         print("Running initializer agent...", flush=True)
 

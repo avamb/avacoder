@@ -496,6 +496,9 @@ class SettingsResponse(BaseModel):
     # Per-complexity model routing: {"1": model_id, "2": ..., "3": ...}
     # Empty/missing level = use the default model for that complexity
     model_routing: dict[str, str] = Field(default_factory=dict)
+    # Model for planning stages (initializer, spec/expand chats).
+    # Empty = provider's strongest (default) model
+    model_planning: str | None = None
 
 
 class ModelsResponse(BaseModel):
@@ -518,6 +521,7 @@ class SettingsUpdate(BaseModel):
     api_auth_token: str | None = Field(None, max_length=500)  # Write-only, never returned
     api_model: str | None = Field(None, max_length=200)
     model_routing: dict[str, str] | None = None
+    model_planning: str | None = Field(None, max_length=200)
 
     @field_validator('model_routing')
     @classmethod

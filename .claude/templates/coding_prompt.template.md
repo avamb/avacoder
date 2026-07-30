@@ -20,7 +20,10 @@ cat app_spec.txt
 # 4. Read progress notes from previous sessions (last 500 lines to avoid context overflow)
 tail -500 claude-progress.txt
 
-# 5. Check recent git history
+# 5. Read repository conventions (test tagging, env vars, CI layout, codegen commands)
+cat AGENTS.md
+
+# 6. Check recent git history
 git log --oneline -20
 ```
 
@@ -155,6 +158,27 @@ Use the feature_mark_passing tool with feature_id=42
 - Reorder features
 
 **ONLY MARK A FEATURE AS PASSING AFTER VERIFICATION WITH BROWSER AUTOMATION.**
+
+### STEP 6.5: REPO-WIDE CONSISTENCY CHECKLIST (MANDATORY BEFORE COMMIT)
+
+Feature-local tests passing is NOT enough - your change must not create drift
+in repo-wide artifacts. Complete every applicable item:
+
+- **API surface changed** (routes, request/response shapes)? Update the API
+  spec (e.g., openapi.yaml) AND regenerate all codegen artifacts (server types,
+  client types) using the repo's documented commands. Commit the regenerated
+  files together with your change.
+- **Added a DB migration?** Update everything that pins the migration head
+  (tests, fixtures, docs).
+- **Added tests that need live services** (database, external daemons)? Follow
+  the repo's convention for separating them from unit tests (build tags, env
+  guards) - see AGENTS.md. A test that silently skips locally but explodes in a
+  CI job with different env vars is a defect.
+- **Run the repo's lint/format** on the packages you touched.
+- **Discovered a new convention or environment requirement** during this
+  session (a build tag, a required env var, a CI quirk)? ADD it to AGENTS.md so
+  future sessions don't rediscover it the hard way. Keep entries short and
+  factual.
 
 ### STEP 7: COMMIT YOUR PROGRESS
 

@@ -125,9 +125,11 @@ class ExpandChatSession:
         except UnicodeDecodeError:
             skill_content = skill_path.read_text(encoding="utf-8", errors="replace")
 
-        # Resolve engine configuration and validate its CLI before creating temp files
-        from registry import get_effective_engine_config
+        # Resolve engine configuration and validate its CLI before creating temp files.
+        # Expanding the backlog is a planning stage: run it on the planning model.
+        from registry import get_effective_engine_config, get_planning_model
         engine_config = get_effective_engine_config()
+        planning_model = get_planning_model() or engine_config.model
         if engine_config.engine == "claude" and not shutil.which("claude"):
             yield {
                 "type": "error",
@@ -180,7 +182,7 @@ class ExpandChatSession:
             self.client = create_engine_client(
                 engine_config.engine,
                 EngineOptions(
-                    model=engine_config.model,
+                    model=planning_model,
                     effort=engine_config.effort,
                     system_prompt=system_prompt,
                     allowed_tools=[

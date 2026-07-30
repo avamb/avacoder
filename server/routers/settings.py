@@ -1,4 +1,4 @@
-"""
+﻿"""
 Settings Router
 ===============
 
@@ -139,6 +139,7 @@ async def get_settings():
         api_has_auth_token=bool(all_settings.get("api_auth_token")),
         api_model=all_settings.get("api_model"),
         model_routing=_parse_model_routing(all_settings.get("model_routing")),
+        model_planning=all_settings.get("model_planning") or None,
     )
 
 
@@ -185,9 +186,11 @@ async def update_settings(update: SettingsUpdate):
                 # Auto-set model to provider's default
                 if provider.get("default_model") and update.api_model is None:
                     set_setting("api_model", provider["default_model"])
-                # Reset routing - it references the old provider's model ids
+                # Reset routing/planning - they reference old provider model ids
                 if update.model_routing is None:
                     set_setting("model_routing", "{}")
+                if update.model_planning is None:
+                    set_setting("model_planning", "")
 
     if update.api_base_url is not None:
         set_setting("api_base_url", update.api_base_url)
@@ -202,6 +205,9 @@ async def update_settings(update: SettingsUpdate):
         # Drop empty values so the stored JSON stays compact (VARCHAR(500))
         routing = {k: v for k, v in update.model_routing.items() if v}
         set_setting("model_routing", json.dumps(routing))
+
+    if update.model_planning is not None:
+        set_setting("model_planning", update.model_planning)
 
     # Return updated settings
     all_settings = get_all_settings()
@@ -224,4 +230,5 @@ async def update_settings(update: SettingsUpdate):
         api_has_auth_token=bool(all_settings.get("api_auth_token")),
         api_model=all_settings.get("api_model"),
         model_routing=_parse_model_routing(all_settings.get("model_routing")),
+        model_planning=all_settings.get("model_planning") or None,
     )

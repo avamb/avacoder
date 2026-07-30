@@ -414,6 +414,31 @@ export function SettingsView() {
                   )}
                 </div>
 
+                {/* Planning Model */}
+                {models.length > 1 && (
+                  <div className="space-y-2 pt-2">
+                    <Label className="font-medium">Planning Model</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Used for project planning: spec creation, feature breakdown, and
+                      complexity rating. These decisions shape the whole run, so the
+                      strongest model is recommended.
+                    </p>
+                    <select
+                      value={settings.model_planning ?? ''}
+                      onChange={(e) => !updateSettings.isPending && updateSettings.mutate({ model_planning: e.target.value })}
+                      disabled={isSaving}
+                      className="w-full py-1.5 px-2 text-sm border rounded-md bg-background"
+                    >
+                      <option value="">Default (provider&apos;s strongest)</option>
+                      {models.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.name} ({model.id})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
                 {/* Model Routing by Complexity */}
                 {models.length > 1 && (
                   <div className="space-y-2 pt-2">

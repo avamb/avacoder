@@ -367,6 +367,17 @@ def scaffold_project_prompts(project_dir: Path) -> Path:
             except (OSError, PermissionError) as e:
                 print(f"  Warning: Could not copy {dest_name}: {e}")
 
+    # Scaffold AGENTS.md (repo conventions for agents) at the project root.
+    # Never overwrite - agents maintain this file over time.
+    agents_md_template = TEMPLATES_DIR / "agents_md.template.md"
+    agents_md_dest = project_dir / "AGENTS.md"
+    if agents_md_template.exists() and not agents_md_dest.exists():
+        try:
+            shutil.copy(agents_md_template, agents_md_dest)
+            copied_files.append("AGENTS.md")
+        except (OSError, PermissionError) as e:
+            print(f"  Warning: Could not copy AGENTS.md: {e}")
+
     # Copy allowed_commands.yaml template to .autoforge/
     examples_dir = Path(__file__).parent / "examples"
     allowed_commands_template = examples_dir / "project_allowed_commands.yaml"

@@ -353,9 +353,18 @@ Set up the basic project structure based on what's specified in `app_spec.txt`.
 This typically includes directories for frontend, backend, and any other
 components mentioned in the spec.
 
+### FIFTH TASK: Fill In AGENTS.md (Repository Conventions)
+
+An `AGENTS.md` skeleton exists at the project root. Fill in every section you
+already know from the structure you just created: build/run commands, how test
+suites are split (unit vs live-service tests and their tagging/env-guard
+mechanism), required env vars per suite, codegen/spec regeneration commands,
+migration conventions. Coding agents read this file at the start of every
+session and update it as they learn - seed it well so they start smart.
+
 ### ENDING THIS SESSION
 
-Once you have completed the four tasks above:
+Once you have completed the five tasks above:
 
 1. Commit all work with a descriptive message
 2. Verify features were created using the feature_get_stats tool

@@ -1046,6 +1046,40 @@ def get_effective_engine_config():
     )
 
 
+def get_planning_model() -> str:
+    """Model for planning stages: initializer agent, spec chat, expand chat.
+
+    Feature breakdown, dependency graphs, and complexity ratings determine the
+    whole wave's routing and quality, so planning defaults to the provider's
+    strongest (default) model regardless of the main api_model selection.
+    Override via the "model_planning" setting; invalid values fall back.
+    """
+    all_settings = get_all_settings()
+    provider_id = all_settings.get("api_provider", "claude")
+    provider = API_PROVIDERS.get(provider_id, API_PROVIDERS["claude"])
+    if provider_id == "claude":
+        known_models = set(VALID_MODELS)
+        fallback = DEFAULT_MODEL
+    else:
+        known_models = {m["id"] for m in provider.get("models", [])}
+        fallback = (
+            provider.get("default_model")
+            or all_settings.get("api_model")
+            or DEFAULT_MODEL
+        )
+
+    value = all_settings.get("model_planning")
+    if value:
+        # Custom/Ollama providers allow free-text models; skip the check there
+        if not known_models or value in known_models:
+            return value
+        logger.warning(
+            "model_planning: '%s' is not a model of provider '%s', using %s",
+            value, provider_id, fallback,
+        )
+    return fallback
+
+
 def get_model_routing() -> dict[int, str]:
     """Read the per-complexity model routing table from settings.
 
