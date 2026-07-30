@@ -365,6 +365,9 @@ async def run_autonomous_agent(
                     except Exception as e:
                         print(f"Error parsing reset time: {e}, using default delay")
 
+                # Machine-readable signal for the orchestrator's quota guard
+                print(f"[QUOTA] rate_limited retry_after={int(delay_seconds)}s", flush=True)
+
             if target_time_str:
                 print(
                     f"\nClaude Code Limit Reached. Agent will auto-continue in {delay_seconds:.0f}s ({target_time_str})...",
@@ -426,6 +429,18 @@ async def run_autonomous_agent(
                 print(f"\nRate limit hit. Backoff wait: {delay_seconds} seconds (attempt #{rate_limit_retries})...")
             else:
                 print(f"\nRate limit hit. Waiting {delay_seconds} seconds before retry...")
+
+            # Machine-readable signal for the orchestrator's quota guard
+            print(f"[QUOTA] rate_limited retry_after={int(delay_seconds)}s", flush=True)
+
+            # Orchestrator-managed sessions (single feature, batch, testing):
+            # exit immediately instead of sleeping in-process. Sleeping here
+            # holds a concurrency slot and keeps the feature in_progress for
+            # up to an hour; the orchestrator pauses globally instead and
+            # respawns when the window resets.
+            if feature_id is not None or feature_ids or agent_type == "testing":
+                print("Exiting session; the orchestrator will pause until the limit resets.", flush=True)
+                break
 
             await asyncio.sleep(delay_seconds)
 

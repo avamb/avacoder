@@ -101,8 +101,31 @@ def _parse_bool(value: str | None, default: bool = False) -> bool:
 
 
 
-def _parse_model_routing(raw: str | None) -> dict[str, str]:
-    """Parse the stored model_routing JSON, tolerating malformed values."""
+def _parse_model_routing(raw: str | None, provider_id: str) -> dict[str, str]:
+    """Current provider's slice of the (provider-scoped) routing setting."""
+    from registry import resolve_provider_scoped_setting
+
+    parsed = resolve_provider_scoped_setting(raw, provider_id)
+    if not isinstance(parsed, dict):
+        return {}
+    return {k: v for k, v in parsed.items() if k in ("1", "2", "3") and isinstance(v, str)}
+
+
+def _parse_model_planning(raw: str | None, provider_id: str) -> str | None:
+    """Current provider's slice of the (provider-scoped) planning setting."""
+    from registry import resolve_provider_scoped_setting
+
+    value = resolve_provider_scoped_setting(raw, provider_id)
+    return value if isinstance(value, str) and value else None
+
+
+def _load_scoped_store(raw: str | None) -> dict:
+    """Load the full provider-scoped store for merging on writes.
+
+    Legacy unscoped values are dropped here; they were attributed to the
+    current provider on reads, and the first write migrates the store to the
+    scoped format.
+    """
     if not raw:
         return {}
     try:
@@ -111,7 +134,9 @@ def _parse_model_routing(raw: str | None) -> dict[str, str]:
         return {}
     if not isinstance(parsed, dict):
         return {}
-    return {k: v for k, v in parsed.items() if k in ("1", "2", "3") and isinstance(v, str)}
+    if parsed and all(k in ("1", "2", "3") for k in parsed):
+        return {}  # legacy flat routing - superseded by this write
+    return parsed
 
 
 @router.get("", response_model=SettingsResponse)
@@ -138,8 +163,8 @@ async def get_settings():
         api_base_url=all_settings.get("api_base_url"),
         api_has_auth_token=bool(all_settings.get("api_auth_token")),
         api_model=all_settings.get("api_model"),
-        model_routing=_parse_model_routing(all_settings.get("model_routing")),
-        model_planning=all_settings.get("model_planning") or None,
+        model_routing=_parse_model_routing(all_settings.get("model_routing"), api_provider),
+        model_planning=_parse_model_planning(all_settings.get("model_planning"), api_provider),
     )
 
 
@@ -186,11 +211,8 @@ async def update_settings(update: SettingsUpdate):
                 # Auto-set model to provider's default
                 if provider.get("default_model") and update.api_model is None:
                     set_setting("api_model", provider["default_model"])
-                # Reset routing/planning - they reference old provider model ids
-                if update.model_routing is None:
-                    set_setting("model_routing", "{}")
-                if update.model_planning is None:
-                    set_setting("model_planning", "")
+                # model_routing/model_planning are stored per provider and
+                # survive switches - no reset needed
 
     if update.api_base_url is not None:
         set_setting("api_base_url", update.api_base_url)
@@ -202,12 +224,24 @@ async def update_settings(update: SettingsUpdate):
         set_setting("api_model", update.api_model)
 
     if update.model_routing is not None:
-        # Drop empty values so the stored JSON stays compact (VARCHAR(500))
+        provider_id = get_setting("api_provider", "claude") or "claude"
+        store = _load_scoped_store(get_setting("model_routing", None))
+        # Drop empty values so the stored JSON stays compact
         routing = {k: v for k, v in update.model_routing.items() if v}
-        set_setting("model_routing", json.dumps(routing))
+        if routing:
+            store[provider_id] = routing
+        else:
+            store.pop(provider_id, None)
+        set_setting("model_routing", json.dumps(store))
 
     if update.model_planning is not None:
-        set_setting("model_planning", update.model_planning)
+        provider_id = get_setting("api_provider", "claude") or "claude"
+        store = _load_scoped_store(get_setting("model_planning", None))
+        if update.model_planning:
+            store[provider_id] = update.model_planning
+        else:
+            store.pop(provider_id, None)
+        set_setting("model_planning", json.dumps(store))
 
     # Return updated settings
     all_settings = get_all_settings()
@@ -229,6 +263,6 @@ async def update_settings(update: SettingsUpdate):
         api_base_url=all_settings.get("api_base_url"),
         api_has_auth_token=bool(all_settings.get("api_auth_token")),
         api_model=all_settings.get("api_model"),
-        model_routing=_parse_model_routing(all_settings.get("model_routing")),
-        model_planning=all_settings.get("model_planning") or None,
+        model_routing=_parse_model_routing(all_settings.get("model_routing"), api_provider),
+        model_planning=_parse_model_planning(all_settings.get("model_planning"), api_provider),
     )

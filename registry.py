@@ -1046,13 +1046,40 @@ def get_effective_engine_config():
     )
 
 
+def resolve_provider_scoped_setting(raw: str | None, provider_id: str):
+    """Resolve a provider-scoped JSON setting to the current provider's value.
+
+    Model-related settings (model_routing, model_planning) are stored keyed by
+    provider id ({"codex": ..., "kimi": ...}) so switching providers doesn't
+    lose them. Legacy unscoped values (a flat routing dict / a plain model
+    string from before scoping) are attributed to the current provider.
+
+    Returns the current provider's value, or None.
+    """
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        # Legacy plain string (e.g. a bare model id)
+        return raw
+    if not isinstance(parsed, dict):
+        return parsed if isinstance(parsed, str) else None
+    if parsed and all(k in ("1", "2", "3") for k in parsed):
+        # Legacy flat routing table
+        return parsed
+    value = parsed.get(provider_id)
+    return value if value else None
+
+
 def get_planning_model() -> str:
     """Model for planning stages: initializer agent, spec chat, expand chat.
 
     Feature breakdown, dependency graphs, and complexity ratings determine the
     whole wave's routing and quality, so planning defaults to the provider's
     strongest (default) model regardless of the main api_model selection.
-    Override via the "model_planning" setting; invalid values fall back.
+    Override via the "model_planning" setting (stored per provider); invalid
+    values fall back.
     """
     all_settings = get_all_settings()
     provider_id = all_settings.get("api_provider", "claude")
@@ -1068,8 +1095,10 @@ def get_planning_model() -> str:
             or DEFAULT_MODEL
         )
 
-    value = all_settings.get("model_planning")
-    if value:
+    value = resolve_provider_scoped_setting(
+        all_settings.get("model_planning"), provider_id
+    )
+    if value and isinstance(value, str):
         # Custom/Ollama providers allow free-text models; skip the check there
         if not known_models or value in known_models:
             return value
@@ -1094,19 +1123,13 @@ def get_model_routing() -> dict[int, str]:
         back to the run's default model at the call site.
     """
     all_settings = get_all_settings()
-    raw = all_settings.get("model_routing")
-    if not raw:
-        return {}
-
-    try:
-        parsed = json.loads(raw)
-    except (ValueError, TypeError):
-        logger.warning("Ignoring malformed model_routing setting: %r", raw)
-        return {}
+    provider_id = all_settings.get("api_provider", "claude")
+    parsed = resolve_provider_scoped_setting(
+        all_settings.get("model_routing"), provider_id
+    )
     if not isinstance(parsed, dict):
         return {}
 
-    provider_id = all_settings.get("api_provider", "claude")
     provider = API_PROVIDERS.get(provider_id, API_PROVIDERS["claude"])
     if provider_id == "claude":
         known_models = set(VALID_MODELS)

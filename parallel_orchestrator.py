@@ -27,6 +27,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Literal
@@ -225,6 +226,11 @@ class ParallelOrchestrator:
 
         # Graceful pause (drain mode) flag
         self._drain_requested = False
+
+        # Quota guard: monotonic-ish deadline (time.time()) until which no new
+        # agents are spawned because the provider's rate-limit window is
+        # exhausted (set from agent [QUOTA] output lines in _read_output)
+        self._quota_pause_until: float = 0.0
 
         # Session tracking for logging/debugging
         self.session_start_time: datetime | None = None
@@ -1188,6 +1194,10 @@ class ParallelOrchestrator:
         r"feature_claim_and_get\b.*?['\"]?feature_id['\"]?\s*[:=]\s*(\d+)"
     )
 
+    # Machine-readable rate-limit signal emitted by agent.py when the provider
+    # window is exhausted (see the quota guard in the main loop)
+    _QUOTA_PATTERN = re.compile(r"\[QUOTA\] rate_limited retry_after=(\d+)s")
+
     def _read_output(
         self,
         feature_id: int | None,
@@ -1211,6 +1221,17 @@ class ParallelOrchestrator:
                     claimed_id = int(claim_match.group(1))
                     if claimed_id != current_feature_id:
                         current_feature_id = claimed_id
+                # Detect provider rate-limit exhaustion -> global quota pause
+                quota_match = self._QUOTA_PATTERN.search(line)
+                if quota_match:
+                    pause_until = time.time() + int(quota_match.group(1))
+                    with self._lock:
+                        if pause_until > self._quota_pause_until:
+                            self._quota_pause_until = pause_until
+                    print(
+                        f"Quota guard: provider rate limit reported; pausing new "
+                        f"agents for {quota_match.group(1)}s", flush=True,
+                    )
                 if self.on_output is not None:
                     self.on_output(current_feature_id or 0, line)
                 else:
@@ -1602,6 +1623,23 @@ class ParallelOrchestrator:
                         debug_log.log("DRAIN", f"Waiting for agents to finish: coding={coding_count}, testing={testing_count}")
                         await self._wait_for_agent_completion()
                         continue
+
+                # Quota guard: the provider's rate-limit window is exhausted.
+                # Let running agents finish, but don't start new work until
+                # the window resets - starting features that get cut off
+                # mid-way is how half-done work happens on limited tiers.
+                with self._lock:
+                    quota_pause_until = self._quota_pause_until
+                now = time.time()
+                if now < quota_pause_until:
+                    remaining = int(quota_pause_until - now)
+                    resume_at = datetime.fromtimestamp(quota_pause_until).strftime("%H:%M:%S")
+                    print(
+                        f"Quota guard active: no new agents until {resume_at} "
+                        f"({remaining}s remaining)", flush=True,
+                    )
+                    await asyncio.sleep(min(remaining, POLL_INTERVAL * 4))
+                    continue
 
                 # Maintain testing agents independently (runs every iteration)
                 self._maintain_testing_agents(feature_dicts)
