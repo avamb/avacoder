@@ -391,6 +391,28 @@ Planned fixes, in priority order:
    all default to complexity=2 (the whole AB wave ran on the standard-tier
    model); add a one-click assistant pass to re-rate pending features.
 
+### Quota-constrained operation (user runs the $20 ChatGPT Plus tier)
+
+Concurrency=1 is the CORRECT default on limited subscription tiers: with 3
+parallel agents, quota exhaustion mid-window leaves all three features
+half-done (confirmed by the user's experience). Do not recommend raising
+concurrency; optimize quota instead:
+
+7. **Prefer batching over parallelism** - batch_size 2-3 with concurrency 1:
+   several small features share one session's context-reading overhead, which
+   is cheaper per feature than separate sessions.
+8. **Quota guard in the orchestrator** - before claiming a new feature, check
+   the remaining 5-hour-window quota (usage arrives in every turn.completed;
+   the SDK also has an account API). Below a threshold: finish the current
+   feature, then pause until the window resets instead of starting work that
+   will be cut off mid-way. Optionally surface a quota gauge in the UI.
+9. **Complexity routing as cost control** - on limited tiers routing is
+   primarily about quota, not speed: simple features on the cheap model
+   (gpt-5.6-luna, low effort) stretch the window. Re-rating the backlog (item
+   6) is a direct money saver.
+10. **Integrator/testing agents on the cheap model** - gates are mostly
+    command-running; route them to luna by default.
+
 ## 9. Explicitly out of scope
 
 - Proxy/translation layers exposing subscriptions as generic APIs (ToS-fragile) — the
