@@ -431,6 +431,29 @@ concurrency; optimize quota instead:
     (default: the provider's top model) applied to the initializer agent, spec
     chat, and expand chat. Implementation mirrors model_routing plumbing.
 
+Additional CI-round findings (external review, 2026-07-30): (a) an agent put a
+live-DB test in an untagged file - silently skipped locally, red in the CI Unit
+job (repo convention: integration build tag); (b) a Playwright mobile smoke was
+never actually executed - NOTE the wave ran with YOLO mode ON, which explicitly
+disables browser verification, and the playwright skill docs are not yet
+delivered to Codex agents (known follow-up). Hence:
+
+13. **AGENTS.md conventions scaffolding** - generate and maintain a project
+    AGENTS.md capturing repo conventions: integration-test build tags, required
+    env vars per suite, CI job layout, codegen commands. Codex auto-loads it
+    (the engine was deliberately pointed at AGENTS.md, not CLAUDE.md); the
+    integrator agent keeps it current. Directly fixes "agent doesn't understand
+    CI job environments".
+14. **Browser verification honesty** - deliver playwright-cli skill content to
+    Codex-path prompts (existing follow-up); when a feature's steps require UI
+    verification, the coding prompt must refuse the shortcut even in YOLO mode
+    or the feature must be routed through a testing agent; integrator gate runs
+    the browser smokes. Recommend running UI-heavy waves with YOLO off.
+15. **CI as the authoritative gate** - local gates can't fully replicate CI job
+    envs (the untagged-test failure only reproduced in CI); with auto_push
+    (item 2), push each wave to a working branch early and treat CI results as
+    the final gate, filing fix-features on red.
+
 ## 9. Explicitly out of scope
 
 - Proxy/translation layers exposing subscriptions as generic APIs (ToS-fragile) — the
