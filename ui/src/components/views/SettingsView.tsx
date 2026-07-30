@@ -566,6 +566,44 @@ export function SettingsView() {
                   </div>
                 </div>
 
+                {/* Integration Gate */}
+                <div className="space-y-2">
+                  <Label className="font-medium">Integration Gate</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Run repo-wide checks (full test suite, lint, spec/codegen drift)
+                    after every N completed features. 0 = disabled.
+                  </p>
+                  <div className="flex rounded-lg border overflow-hidden">
+                    {[0, 3, 5, 10, 20].map((interval) => (
+                      <button
+                        key={interval}
+                        onClick={() => !updateSettings.isPending && updateSettings.mutate({ integrator_interval: interval })}
+                        disabled={isSaving}
+                        className={`flex-1 py-2 px-3 text-sm font-medium transition-colors ${
+                          (settings.integrator_interval ?? 5) === interval
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-background text-foreground hover:bg-muted'
+                        } ${isSaving ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        {interval === 0 ? 'Off' : interval}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center justify-between pt-1">
+                    <div>
+                      <Label className="text-sm">Auto Push &amp; CI Watch</Label>
+                      <p className="text-xs text-muted-foreground">
+                        After green local gates, push the branch and watch CI (needs git remote; gh CLI for CI watch)
+                      </p>
+                    </div>
+                    <Switch
+                      checked={settings.auto_push ?? false}
+                      onCheckedChange={() => !updateSettings.isPending && updateSettings.mutate({ auto_push: !settings.auto_push })}
+                      disabled={isSaving}
+                    />
+                  </div>
+                </div>
+
                 {/* Regression Agents */}
                 <div className="space-y-2">
                   <Label className="font-medium">Regression Agents</Label>

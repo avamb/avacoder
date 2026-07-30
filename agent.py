@@ -35,6 +35,7 @@ from prompts import (
     get_batch_feature_prompt,
     get_coding_prompt,
     get_initializer_prompt,
+    get_integrator_prompt,
     get_single_feature_prompt,
     get_testing_prompt,
 )
@@ -233,6 +234,9 @@ async def run_autonomous_agent(
     elif agent_type == "testing":
         print("Running as TESTING agent (regression testing)")
         print_progress_summary(project_dir)
+    elif agent_type == "integrator":
+        print("Running as INTEGRATOR agent (repo-wide gates)")
+        print_progress_summary(project_dir)
     else:
         print("Running as CODING agent")
         print_progress_summary(project_dir)
@@ -248,7 +252,8 @@ async def run_autonomous_agent(
         # Check if all features are already complete (before starting a new session)
         # Skip this check if running as initializer (needs to create features first)
         # or auto-improve mode (intentionally runs against finished projects)
-        if not is_initializer and not auto_improve and iteration == 1:
+        # (integrator legitimately runs when everything passes - final gate)
+        if not is_initializer and not auto_improve and agent_type != "integrator" and iteration == 1:
             passing, in_progress, total, _nhi = count_passing_tests(project_dir)
             if total > 0 and passing == total:
                 print("\n" + "=" * 70)
@@ -278,6 +283,8 @@ async def run_autonomous_agent(
             prompt = get_initializer_prompt(project_dir)
         elif agent_type == "testing":
             prompt = get_testing_prompt(project_dir, testing_feature_id, testing_feature_ids)
+        elif agent_type == "integrator":
+            prompt = get_integrator_prompt(project_dir)
         elif feature_ids and len(feature_ids) > 1:
             # Batch mode (used by orchestrator for multi-feature coding agents)
             prompt = get_batch_feature_prompt(feature_ids, project_dir, yolo_mode)
@@ -404,6 +411,9 @@ async def run_autonomous_agent(
                 break
             elif agent_type == "testing":
                 print("\nTesting agent complete. Terminating session.")
+                break
+            elif agent_type == "integrator":
+                print("\nIntegrator gate complete. Terminating session.")
                 break
 
             # Reset rate limit retries only if no rate limit signal was detected

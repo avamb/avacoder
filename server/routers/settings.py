@@ -190,6 +190,8 @@ async def get_settings():
             p for p in _parse_provider_fallback(all_settings.get("provider_fallback"))
             if p != api_provider
         ],
+        integrator_interval=_parse_int(all_settings.get("integrator_interval"), 5),
+        auto_push=_parse_bool(all_settings.get("auto_push"), False),
     )
 
 
@@ -279,6 +281,12 @@ async def update_settings(update: SettingsUpdate):
     if update.provider_fallback is not None:
         set_setting("provider_fallback", json.dumps(update.provider_fallback))
 
+    if update.integrator_interval is not None:
+        set_setting("integrator_interval", str(update.integrator_interval))
+
+    if update.auto_push is not None:
+        set_setting("auto_push", "true" if update.auto_push else "false")
+
     # Return updated settings
     all_settings = get_all_settings()
     api_provider = all_settings.get("api_provider", "claude")
@@ -305,4 +313,6 @@ async def update_settings(update: SettingsUpdate):
             p for p in _parse_provider_fallback(all_settings.get("provider_fallback"))
             if p != api_provider
         ],
+        integrator_interval=_parse_int(all_settings.get("integrator_interval"), 5),
+        auto_push=_parse_bool(all_settings.get("auto_push"), False),
     )

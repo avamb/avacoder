@@ -311,6 +311,8 @@ const DEFAULT_SETTINGS: Settings = {
   model_routing: {},
   model_planning: null,
   provider_fallback: [],
+  integrator_interval: 5,
+  auto_push: false,
 }
 
 const DEFAULT_PROVIDERS: ProvidersResponse = {

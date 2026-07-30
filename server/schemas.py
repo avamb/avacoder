@@ -501,6 +501,11 @@ class SettingsResponse(BaseModel):
     model_planning: str | None = None
     # Ordered fallback providers for subscription failover (excluding primary)
     provider_fallback: list[str] = Field(default_factory=list)
+    # Integrator wave gate: run repo-wide checks after every N passed features
+    # (0 = disabled)
+    integrator_interval: int = 5
+    # Integrator pushes + watches CI after green local gates
+    auto_push: bool = False
 
 
 class ModelsResponse(BaseModel):
@@ -525,6 +530,8 @@ class SettingsUpdate(BaseModel):
     model_routing: dict[str, str] | None = None
     model_planning: str | None = Field(None, max_length=200)
     provider_fallback: list[str] | None = None
+    integrator_interval: int | None = Field(None, ge=0, le=50)
+    auto_push: bool | None = None
 
     @field_validator('provider_fallback')
     @classmethod

@@ -74,6 +74,23 @@ def get_initializer_prompt(project_dir: Path | None = None) -> str:
     return load_prompt("initializer_prompt", project_dir)
 
 
+def get_integrator_prompt(project_dir: Path | None = None) -> str:
+    """Load the integrator (wave gate) prompt (project-specific if available).
+
+    Substitutes $AUTO_PUSH with "ENABLED"/"DISABLED" from the auto_push
+    setting so the push & CI step activates only when the user opted in.
+    """
+    prompt = load_prompt("integrator_prompt", project_dir)
+    auto_push = "DISABLED"
+    try:
+        from registry import get_setting
+        if (get_setting("auto_push", "false") or "false").lower() == "true":
+            auto_push = "ENABLED"
+    except Exception:
+        pass
+    return prompt.replace("$AUTO_PUSH", auto_push)
+
+
 def _strip_browser_testing_sections(prompt: str) -> str:
     """Strip browser automation and Playwright testing instructions from prompt.
 
@@ -352,6 +369,7 @@ def scaffold_project_prompts(project_dir: Path) -> Path:
         ("coding_prompt.template.md", "coding_prompt.md"),
         ("initializer_prompt.template.md", "initializer_prompt.md"),
         ("testing_prompt.template.md", "testing_prompt.md"),
+        ("integrator_prompt.template.md", "integrator_prompt.md"),
     ]
 
     copied_files = []

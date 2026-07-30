@@ -183,6 +183,15 @@ INITIALIZER_AGENT_TOOLS = [
     "mcp__features__feature_set_dependencies",
 ]
 
+# Integrator (wave gate): runs repo-wide checks, fixes drift directly, and
+# files fix-features for substantial defects. It never marks features
+# passing/failing - that stays with coding/testing agents.
+INTEGRATOR_AGENT_TOOLS = [
+    "mcp__features__feature_get_stats",
+    "mcp__features__feature_create",
+    "mcp__features__feature_create_bulk",
+]
+
 # Union of all agent tool lists -- used for permissions (all tools remain
 # *permitted* so the MCP server can respond, but only the agent-type-specific
 # list is included in allowed_tools, which controls what the LLM sees).
@@ -238,16 +247,19 @@ def create_client(
         "coding": CODING_AGENT_TOOLS,
         "testing": TESTING_AGENT_TOOLS,
         "initializer": INITIALIZER_AGENT_TOOLS,
+        "integrator": INTEGRATOR_AGENT_TOOLS,
     }
     feature_tools = feature_tools_map.get(agent_type, CODING_AGENT_TOOLS)
 
     # Select max_turns based on agent type:
     #   - coding/initializer: 300 turns (complex multi-step implementation)
     #   - testing: 100 turns (focused verification of a single feature)
+    #   - integrator: 200 turns (repo-wide gates + drift fixes)
     max_turns_map = {
         "coding": 300,
         "testing": 100,
         "initializer": 300,
+        "integrator": 200,
     }
     max_turns = max_turns_map.get(agent_type, 300)
 

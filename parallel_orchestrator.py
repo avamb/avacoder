@@ -136,6 +136,7 @@ DEFAULT_TESTING_BATCH_SIZE = 3  # Number of features per testing batch (1-15)
 POLL_INTERVAL = 5  # seconds between checking for ready features
 MAX_FEATURE_RETRIES = 3  # Maximum times to retry a failed feature
 INITIALIZER_TIMEOUT = 1800  # 30 minutes timeout for initializer
+INTEGRATOR_TIMEOUT = 3600  # 60 minutes for the integrator gate (full test suites are slow)
 
 
 class ParallelOrchestrator:
@@ -194,6 +195,17 @@ class ParallelOrchestrator:
         if len(self._provider_chain) > 1:
             logger.info("Provider failover chain: %s", " -> ".join(self._provider_chain))
             print(f"Provider failover chain: {' -> '.join(self._provider_chain)}", flush=True)
+        # Integrator "wave gate": run repo-wide gates (full suite, lint,
+        # spec/codegen drift) after every N newly passed features and once at
+        # the end of the run. 0 = disabled.
+        try:
+            from registry import get_setting
+            self.integrator_interval = max(0, min(50, int(get_setting("integrator_interval", "5") or 5)))
+        except Exception:
+            self.integrator_interval = 5
+        self._passing_at_last_gate: int | None = None
+        self._final_gate_done = False
+
         # Per-provider complexity routing cache (loaded lazily)
         self._routing_by_provider: dict[str, dict[int, str]] = {}
         try:
@@ -1270,6 +1282,102 @@ class ParallelOrchestrator:
 
         return True
 
+    async def _maybe_run_final_gate(self, feature_dicts: list[dict]) -> None:
+        """Run the integrator once at the end of the run if anything passed
+        since the last gate (or no gate ever ran)."""
+        if self.integrator_interval <= 0 or self._final_gate_done:
+            return
+        passing_now = sum(1 for f in feature_dicts if f.get("passes"))
+        if self._passing_at_last_gate is not None and passing_now <= self._passing_at_last_gate:
+            return
+        self._final_gate_done = True
+        print("Running final integrator gate before finishing...", flush=True)
+        await self._run_integrator()
+        self._passing_at_last_gate = passing_now
+
+    def _integrator_model(self, provider_id: str) -> str | None:
+        """Model for the integrator gate: mostly command-running, so use the
+        cheap tier (complexity-1 routing) when configured, else the base."""
+        routing = self._routing_for(provider_id)
+        return routing.get(1) or self._base_model_for(provider_id)
+
+    async def _run_integrator(self) -> bool:
+        """Run the integrator (wave gate) agent as a blocking subprocess.
+
+        The integrator runs repo-wide gates (full test suite, lint,
+        spec/codegen drift, migration pins per AGENTS.md), fixes small drifts
+        directly, files fix-features for bigger defects, prunes stale
+        progress notes, and (with auto_push enabled) pushes + watches CI.
+        Runs exclusively - the main loop only calls this with no coding
+        agents running, so the gate sees a quiescent repository.
+        """
+        debug_log.section("INTEGRATOR GATE")
+        provider = self._active_provider
+        cmd = [
+            sys.executable, "-u",
+            str(AUTOFORGE_ROOT / "autonomous_agent_demo.py"),
+            "--project-dir", str(self.project_dir),
+            "--agent-type", "integrator",
+            "--max-iterations", "1",
+        ]
+        gate_model = self._integrator_model(provider)
+        if gate_model:
+            cmd.extend(["--model", gate_model])
+        if provider != self._provider_chain[0]:
+            cmd.extend(["--api-provider", provider])
+
+        print(f"Integrator gate: running repo-wide checks (model: {gate_model or 'default'})...", flush=True)
+
+        popen_kwargs: dict[str, Any] = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.STDOUT,
+            "text": True,
+            "encoding": "utf-8",
+            "errors": "replace",
+            "cwd": str(self.project_dir),
+            "env": {**os.environ, "PYTHONUNBUFFERED": "1", "NODE_COMPILE_CACHE": ""},
+        }
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+        proc = subprocess.Popen(cmd, **popen_kwargs)
+        debug_log.log("GATE", "Integrator subprocess started", pid=proc.pid)
+
+        loop = asyncio.get_running_loop()
+        try:
+            async def stream_output():
+                while True:
+                    line = await loop.run_in_executor(None, proc.stdout.readline)
+                    if not line:
+                        break
+                    stripped = line.rstrip()
+                    # Feed the quota guard from gate output too
+                    quota_match = self._QUOTA_PATTERN.search(stripped)
+                    if quota_match:
+                        until = time.time() + int(quota_match.group(1))
+                        with self._lock:
+                            if until > self._provider_cooldowns.get(provider, 0.0):
+                                self._provider_cooldowns[provider] = until
+                    if self.on_output is not None:
+                        self.on_output(0, f"[Integrator] {stripped}")
+                    else:
+                        print(f"[Integrator] {stripped}", flush=True)
+                proc.wait()
+
+            await asyncio.wait_for(stream_output(), timeout=INTEGRATOR_TIMEOUT)
+        except asyncio.TimeoutError:
+            print(f"ERROR: Integrator timed out after {INTEGRATOR_TIMEOUT // 60} minutes", flush=True)
+            kill_process_tree(proc)
+            return False
+
+        debug_log.log("GATE", "Integrator subprocess completed", return_code=proc.returncode)
+        if proc.returncode != 0:
+            print(f"Integrator gate exited with code {proc.returncode}", flush=True)
+            return False
+        print("Integrator gate complete.", flush=True)
+        return True
+
     # Pattern to detect when a batch agent claims a new feature
     _CLAIM_FEATURE_PATTERN = re.compile(
         r"feature_claim_and_get\b.*?['\"]?feature_id['\"]?\s*[:=]\s*(\d+)"
@@ -1681,6 +1789,7 @@ class ParallelOrchestrator:
                 # Check if all complete
                 if self.get_all_complete(feature_dicts):
                     print("\nAll features complete!", flush=True)
+                    await self._maybe_run_final_gate(feature_dicts)
                     break
 
                 # --- Graceful pause (drain mode) ---
@@ -1760,6 +1869,26 @@ class ParallelOrchestrator:
                     await self._wait_for_agent_completion()
                     continue
 
+                # Integrator wave gate: after every N newly passed features,
+                # stop starting new coding work, let running agents drain,
+                # then run repo-wide gates exclusively.
+                if self.integrator_interval > 0:
+                    passing_now = sum(1 for f in feature_dicts if f.get("passes"))
+                    if self._passing_at_last_gate is None:
+                        self._passing_at_last_gate = passing_now
+                    elif passing_now - self._passing_at_last_gate >= self.integrator_interval:
+                        if current > 0:
+                            print(
+                                f"Integrator gate due ({passing_now - self._passing_at_last_gate} "
+                                f"features since last gate); draining running agents...",
+                                flush=True,
+                            )
+                            await self._wait_for_agent_completion()
+                            continue
+                        await self._run_integrator()
+                        self._passing_at_last_gate = passing_now
+                        continue
+
                 # Priority 1: Resume features from previous session
                 resumable = self.get_resumable_features(feature_dicts, scheduling_scores)
                 if resumable:
@@ -1791,6 +1920,7 @@ class ParallelOrchestrator:
                         # Recheck if all features are now complete
                         if self.get_all_complete(fresh_dicts):
                             print("\nAll features complete!", flush=True)
+                            await self._maybe_run_final_gate(fresh_dicts)
                             break
 
                         # Still have pending features but all are blocked by dependencies
