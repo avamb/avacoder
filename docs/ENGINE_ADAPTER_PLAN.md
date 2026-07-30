@@ -358,6 +358,39 @@ Effort: ~1–2 days, independent of the Codex engine — worth doing right after
 | Upstream merge conflicts (VISION.md policy) | keep changes additive (`engines/` package, dispatch shims); sync upstream regularly |
 | Kimi model-string syntax (`k3` vs `k3[1m]`) | verify against kimi.com/code docs during Phase 1 e2e test |
 
+## 8a. Post-E2E improvement plan (from the first real 18-feature wave, 2026-07-30)
+
+The Codex engine itself performed well (18/18 features substantively implemented,
+tests grew, none weakened). All defects found in external review were
+orchestration-level and exist upstream too: agents verify per-feature/per-package
+and never run repo-wide gates, and the loop ends at a local commit (no push, CI
+never ran). Accumulated drift: OpenAPI spec missing 3 routes, codegen (Go/TS)
+stale, full Go suite red on a guardrail, migration-head pin stale, lint nits.
+
+Planned fixes, in priority order:
+
+1. **Integrator agent ("wave gate")** - new agent type spawned by the
+   orchestrator after every N passed features (setting, default ~5) and when the
+   queue empties. Prompt = repo-wide gates: full test suite, lint, spec/codegen
+   drift, migration pins. Fixes findings itself or files fix-features via
+   feature_create. Reuses the testing-agent spawn mechanics + a new
+   `.claude/templates/integrator_prompt.template.md`; trigger counter in
+   `_on_agent_complete`.
+2. **auto_push setting (default off)** - integrator pushes after green local
+   gates; if `gh` is available, watches CI and files a fix-feature on red.
+3. **Feature-completion contract in the coding prompt** - explicit final
+   checklist: regenerate spec/codegen when API changed, update migration pins
+   when migrations added. Cheap; would have prevented 3 of 5 review findings.
+4. **claude-progress.txt hygiene** - integrator compacts/prunes stale wave notes
+   (observed: an outdated "must not mark passing until Go available" note kept
+   scaring later agents).
+5. **Codex command timeout** - full `go test ./...` hit the ~4 min per-command
+   limit; raise via config override for heavy repos (find the exact key in the
+   codex config reference).
+6. **Backlog complexity re-rating** - features created before routing shipped
+   all default to complexity=2 (the whole AB wave ran on the standard-tier
+   model); add a one-click assistant pass to re-rate pending features.
+
 ## 9. Explicitly out of scope
 
 - Proxy/translation layers exposing subscriptions as generic APIs (ToS-fragile) — the
