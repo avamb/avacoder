@@ -250,6 +250,7 @@ export function useProjectWebSocket(projectName: string | null) {
                     featureName: message.featureName,
                     state: message.state,
                     thought: message.thought,
+                    model: message.model ?? prev.activeAgents[existingAgentIdx].model,
                     timestamp: message.timestamp,
                     logs: agentLogsArray,
                   }
@@ -266,6 +267,7 @@ export function useProjectWebSocket(projectName: string | null) {
                       featureName: message.featureName,
                       state: message.state,
                       thought: message.thought,
+                      model: message.model ?? null,
                       timestamp: message.timestamp,
                       logs: agentLogsArray,
                     },

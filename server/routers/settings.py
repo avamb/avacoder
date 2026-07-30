@@ -12,7 +12,16 @@ import sys
 
 from fastapi import APIRouter
 
-from ..schemas import ModelInfo, ModelsResponse, ProviderInfo, ProvidersResponse, SettingsResponse, SettingsUpdate
+from ..schemas import (
+    ModelInfo,
+    ModelsResponse,
+    ProviderInfo,
+    ProvidersResponse,
+    QuotaResponse,
+    QuotaWindow,
+    SettingsResponse,
+    SettingsUpdate,
+)
 from ..services.chat_constants import ROOT_DIR
 
 # Mimetype fix for Windows - must run before StaticFiles is mounted
@@ -158,6 +167,65 @@ def _load_scoped_store(raw: str | None) -> dict:
     if parsed and all(k in ("1", "2", "3") for k in parsed):
         return {}  # legacy flat routing - superseded by this write
     return parsed
+
+
+# Quota snapshot cache: reading spawns a short-lived Codex app-server (~2s),
+# so throttle to one real read per minute
+_quota_cache: dict = {"at": 0.0, "response": None}
+_QUOTA_CACHE_TTL = 60.0
+
+
+@router.get("/quota", response_model=QuotaResponse)
+async def get_quota():
+    """Remaining-quota snapshot for the active provider (codex engine only)."""
+    import time as _time
+
+    provider_id = get_setting("api_provider", "claude") or "claude"
+    provider = API_PROVIDERS.get(provider_id, {})
+    if provider.get("engine", "claude") != "codex":
+        return QuotaResponse(supported=False, provider=provider_id)
+
+    now = _time.time()
+    cached = _quota_cache["response"]
+    if cached is not None and now - _quota_cache["at"] < _QUOTA_CACHE_TTL:
+        return cached
+
+    from engines.codex_engine import read_codex_quota
+
+    payload = await read_codex_quota()
+    windows: list[QuotaWindow] = []
+    if isinstance(payload, dict):
+        snap = payload.get("rateLimits") if isinstance(payload.get("rateLimits"), dict) else payload
+        for key in ("primary", "secondary"):
+            w = snap.get(key) if isinstance(snap, dict) else None
+            if not isinstance(w, dict):
+                continue
+            resets_at = w.get("resetsAt")
+            if resets_at and resets_at > 1e12:
+                resets_at = resets_at / 1000.0
+            minutes = w.get("windowDurationMins")
+            if minutes and minutes >= 10000:
+                label = "week"
+            elif minutes:
+                label = f"{max(1, round(minutes / 60))}h"
+            else:
+                label = key
+            windows.append(QuotaWindow(
+                name=label,
+                used_percent=int(w.get("usedPercent", 0) or 0),
+                resets_at=resets_at,
+                window_minutes=minutes,
+            ))
+
+    response = QuotaResponse(
+        supported=bool(windows),
+        provider=provider_id,
+        windows=windows,
+        fetched_at=now,
+    )
+    _quota_cache["at"] = now
+    _quota_cache["response"] = response
+    return response
 
 
 @router.get("", response_model=SettingsResponse)

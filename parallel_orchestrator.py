@@ -1153,6 +1153,8 @@ class ParallelOrchestrator:
             testing_model = self._base_model_for(provider)
             if testing_model:
                 cmd.extend(["--model", testing_model])
+                # Announce for the UI agent tracker (model badge on cards)
+                print(f"Feature #{primary_feature_id}: routed to model {testing_model}", flush=True)
             if provider != self._provider_chain[0]:
                 cmd.extend(["--api-provider", provider])
 

@@ -514,6 +514,22 @@ class ModelsResponse(BaseModel):
     default: str
 
 
+class QuotaWindow(BaseModel):
+    """One rate-limit window of the active provider's subscription."""
+    name: str  # "5h" / "week" style label
+    used_percent: int
+    resets_at: float | None = None  # epoch seconds
+    window_minutes: int | None = None
+
+
+class QuotaResponse(BaseModel):
+    """Remaining-quota snapshot for the active provider."""
+    supported: bool
+    provider: str
+    windows: list[QuotaWindow] = Field(default_factory=list)
+    fetched_at: float | None = None  # epoch seconds
+
+
 class SettingsUpdate(BaseModel):
     """Request schema for updating global settings."""
     yolo_mode: bool | None = None

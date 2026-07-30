@@ -3,6 +3,7 @@
  */
 
 import type {
+  QuotaResponse,
   ProjectSummary,
   ProjectDetail,
   ProjectPrompts,
@@ -436,6 +437,10 @@ export async function updateSettings(settings: SettingsUpdate): Promise<Settings
     method: 'PATCH',
     body: JSON.stringify(settings),
   })
+}
+
+export async function getQuota(): Promise<QuotaResponse> {
+  return fetchJSON('/settings/quota')
 }
 
 // ============================================================================

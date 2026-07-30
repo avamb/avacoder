@@ -44,6 +44,13 @@ TESTING_AGENT_COMPLETE_PATTERN = re.compile(r'Feature #(\d+) testing (completed|
 # Matches: "Started coding agent for features #5, #8, #12"
 BATCH_CODING_AGENT_START_PATTERN = re.compile(r'Started coding agent for features (#\d+(?:,\s*#\d+)*)')
 
+# Pattern to detect the orchestrator's model routing announcement
+# Matches: "Feature #410: routed to model gpt-5.6-terra"
+#          "Batch [410, 411, 412]: routed to model gpt-5.6-terra"
+ROUTED_MODEL_PATTERN = re.compile(
+    r'(?:Feature #(\d+)|Batch \[([\d,\s]+)\]): routed to model (\S+)'
+)
+
 # Pattern to detect batch completion
 # Matches: "Features #5, #8, #12 completed" or "Features #5, #8, #12 failed"
 BATCH_FEATURES_COMPLETE_PATTERN = re.compile(r'Features (#\d+(?:,\s*#\d+)*)\s+(completed|failed)')
@@ -98,6 +105,9 @@ class AgentTracker:
         self.active_agents: dict[tuple[int, str], dict] = {}
         self._next_agent_index = 0
         self._lock = asyncio.Lock()
+        # feature_id -> model announced by the orchestrator before spawn
+        # ("Feature #X: routed to model M" arrives before "Started ... #X")
+        self._pending_models: dict[int, str] = {}
 
     async def process_line(self, line: str) -> dict | None:
         """
@@ -107,6 +117,19 @@ class AgentTracker:
         """
         # Check for orchestrator status messages first
         # These don't have [Feature #X] prefix
+
+        # Model routing announcements precede the corresponding spawn lines:
+        # "Feature #410: routed to model gpt-5.6-terra"
+        # "Batch [410, 411, 412]: routed to model gpt-5.6-terra"
+        routed_match = ROUTED_MODEL_PATTERN.match(line)
+        if routed_match:
+            model = routed_match.group(3)
+            ids_raw = routed_match.group(1) or routed_match.group(2) or ""
+            for part in ids_raw.replace("#", "").split(","):
+                part = part.strip()
+                if part.isdigit():
+                    self._pending_models[int(part)] = model
+            return None
 
         # Batch coding agent start: "Started coding agent for features #5, #8, #12"
         batch_start_match = BATCH_CODING_AGENT_START_PATTERN.match(line)
@@ -203,6 +226,23 @@ class AgentTracker:
             if 'current_feature_id' in agent and feature_id in agent.get('feature_ids', []):
                 agent['current_feature_id'] = feature_id
 
+            # Session header announces the actual model ("Model: gpt-5.6-terra")
+            if content.startswith("Model: "):
+                agent['model'] = content[len("Model: "):].strip()
+                return {
+                    'type': 'agent_update',
+                    'agentIndex': agent['agent_index'],
+                    'agentName': agent['name'],
+                    'agentType': agent['agent_type'],
+                    'featureId': feature_id,
+                    'featureIds': agent.get('feature_ids', [feature_id]),
+                    'featureName': agent['feature_name'],
+                    'state': agent['state'],
+                    'thought': agent['last_thought'],
+                    'model': agent['model'],
+                    'timestamp': datetime.now().isoformat(),
+                }
+
             # Detect state and thought from content
             state = 'working'
             thought = None
@@ -230,6 +270,7 @@ class AgentTracker:
                     'featureName': agent['feature_name'],
                     'state': state,
                     'thought': thought,
+                    'model': agent.get('model'),
                     'timestamp': datetime.now().isoformat(),
                 }
 
@@ -287,6 +328,7 @@ class AgentTracker:
                 'state': 'thinking',
                 'feature_name': feature_name,
                 'last_thought': 'Starting work...',
+                'model': self._pending_models.pop(feature_id, None),
             }
 
             return {
@@ -299,6 +341,7 @@ class AgentTracker:
                 'featureName': feature_name,
                 'state': 'thinking',
                 'thought': 'Starting work...',
+                'model': self.active_agents[key].get('model'),
                 'timestamp': datetime.now().isoformat(),
             }
 
@@ -323,6 +366,11 @@ class AgentTracker:
                 'state': 'thinking',
                 'feature_name': feature_name,
                 'last_thought': 'Starting batch work...',
+                'model': next(
+                    (self._pending_models.pop(fid) for fid in feature_ids
+                     if fid in self._pending_models),
+                    None,
+                ),
             }
 
             # Register all feature IDs so output lines can find this agent
@@ -341,6 +389,7 @@ class AgentTracker:
                 'featureName': feature_name,
                 'state': 'thinking',
                 'thought': 'Starting batch work...',
+                'model': self.active_agents[key].get('model'),
                 'timestamp': datetime.now().isoformat(),
             }
 

@@ -233,8 +233,24 @@ export interface ActiveAgent {
   featureName: string
   state: AgentState
   thought?: string
+  /** Model this agent session runs on (from complexity routing) */
+  model?: string | null
   timestamp: string
   logs?: AgentLogEntry[]  // Per-agent log history
+}
+
+export interface QuotaWindow {
+  name: string  // "5h" / "week"
+  used_percent: number
+  resets_at: number | null
+  window_minutes: number | null
+}
+
+export interface QuotaResponse {
+  supported: boolean
+  provider: string
+  windows: QuotaWindow[]
+  fetched_at: number | null
 }
 
 // Orchestrator state for Mission Control
@@ -307,6 +323,7 @@ export interface WSAgentUpdateMessage {
   featureName: string
   state: AgentState
   thought?: string
+  model?: string | null  // Model this agent session runs on
   timestamp: string
   synthetic?: boolean  // True for synthetic completions from untracked agents
 }

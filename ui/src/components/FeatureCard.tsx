@@ -89,6 +89,11 @@ export function FeatureCard({ feature, onClick, isInProgress, allFeatures = [], 
             <div className="flex-1 min-w-0">
               <div className="text-xs font-semibold text-primary">
                 {activeAgent.agentName} is working on this!
+                {activeAgent.model && (
+                  <span className="ml-1.5 font-mono font-normal text-[10px] text-muted-foreground border rounded px-1">
+                    {activeAgent.model}
+                  </span>
+                )}
               </div>
               {activeAgent.thought && (
                 <div className="flex items-center gap-1 mt-0.5">

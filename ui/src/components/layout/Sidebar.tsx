@@ -1,6 +1,7 @@
 import { useAppContext } from '@/contexts/AppContext'
 import { SidebarItem } from './SidebarItem'
 import { ProjectSelector } from '../ProjectSelector'
+import { QuotaBadge } from '../QuotaBadge'
 import {
   LayoutDashboard,
   Columns3,
@@ -91,7 +92,7 @@ export function Sidebar() {
         <div
           className={cn(
             'overflow-hidden transition-all duration-200',
-            sidebarCollapsed ? 'max-h-0 opacity-0 mt-0' : 'max-h-20 opacity-100 mt-3',
+            sidebarCollapsed ? 'max-h-0 opacity-0 mt-0' : 'max-h-40 opacity-100 mt-3',
           )}
         >
           <ProjectSelector
@@ -101,6 +102,7 @@ export function Sidebar() {
             isLoading={projectsLoading}
             onSpecCreatingChange={setIsSpecCreating}
           />
+          <QuotaBadge />
         </div>
       </div>
 
