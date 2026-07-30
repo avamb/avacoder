@@ -36,11 +36,13 @@ Event mapping (plan section 3.3):
     turn/completed                  -> generator ends (raises on failed turns)
 """
 
+import asyncio
 import json
 import logging
 import os
 import re
 import shutil
+import time
 from pathlib import Path
 from typing import Any, AsyncIterable, AsyncIterator, Optional
 
@@ -555,6 +557,26 @@ class CodexClient:
                 # Turn already finished -- nothing to interrupt.
                 pass
 
+    async def _rate_limit_reset_seconds(self) -> Optional[int]:
+        """Seconds until the exhausted rate-limit window resets.
+
+        Codex usage-limit errors often carry no retry-after in their text,
+        which previously collapsed to a tiny client-side backoff and caused
+        respawn churn. The app-server knows the real reset time - read the
+        account rate-limit snapshot over the live connection.
+        """
+        if self._codex is None:
+            return None
+        try:
+            sync_client = self._codex._client._sync  # noqa: SLF001 (pinned SDK)
+            payload = await asyncio.to_thread(
+                sync_client._request_raw, "account/rateLimits/read", None  # noqa: SLF001
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("rateLimits/read failed: %s", exc)
+            return None
+        return _reset_seconds_from_snapshot(payload)
+
     async def interrupt(self) -> None:
         """Interrupt the active turn (parity with ClaudeSDKClient)."""
         if self._turn_handle is not None:
@@ -606,7 +628,19 @@ class CodexClient:
                     turn = payload.turn
                     status = getattr(turn.status, "value", str(turn.status))
                     if status == "failed":
-                        raise _turn_error_to_exception(turn.error or turn_error)
+                        exc = _turn_error_to_exception(turn.error or turn_error)
+                        text = str(exc)
+                        # Usage-limit errors without a parseable retry-after:
+                        # fetch the real window reset time so downstream
+                        # cooldowns wait until the window actually resets
+                        # instead of churning on a tiny default backoff.
+                        if "rate limit" in text and "retry after" not in text:
+                            reset = await self._rate_limit_reset_seconds()
+                            if reset:
+                                exc = CodexEngineError(
+                                    f"{text}. retry after {reset} seconds"
+                                )
+                        raise exc
                     # completed / interrupted -> normal end of stream
                     return
 
@@ -784,6 +818,60 @@ def _patch_kind_name(kind: Any) -> str:
             return attr
     value = getattr(kind, "type", None) or getattr(kind, "value", None)
     return str(value) if value else "update"
+
+
+def _reset_seconds_from_snapshot(payload: Any) -> Optional[int]:
+    """Extract seconds-until-reset from an account/rateLimits/read payload.
+
+    Prefers the reset of exhausted windows (used >= 95%); when both windows
+    are exhausted the later reset wins (the earlier one alone won't unblock).
+    """
+    if not isinstance(payload, dict):
+        return None
+    snap = payload.get("rateLimits") if isinstance(payload.get("rateLimits"), dict) else payload
+    now = time.time()
+    windows: list[tuple[float, float]] = []  # (used_percent, seconds_until_reset)
+    for key in ("primary", "secondary"):
+        w = snap.get(key)
+        if not isinstance(w, dict):
+            continue
+        resets_at = w.get("resetsAt") or w.get("resets_at")
+        if not resets_at:
+            continue
+        resets_at = float(resets_at)
+        if resets_at > 1e12:  # milliseconds epoch
+            resets_at /= 1000.0
+        delta = resets_at - now
+        if delta > 0:
+            windows.append((float(w.get("usedPercent", w.get("used_percent", 0)) or 0), delta))
+    if not windows:
+        return None
+    exhausted = [d for used, d in windows if used >= 95]
+    delay = max(exhausted) if exhausted else min(d for _, d in windows)
+    return int(min(max(delay, 60), 24 * 3600))
+
+
+async def read_codex_quota() -> Optional[dict]:
+    """Standalone rate-limit snapshot read via a short-lived app-server.
+
+    Returns the raw payload dict (rateLimits with primary/secondary windows:
+    usedPercent, resetsAt) or None when unavailable.
+    """
+    try:
+        from openai_codex import AsyncCodex
+    except ImportError:
+        return None
+    try:
+        codex = AsyncCodex()
+        async with codex:
+            sync_client = codex._client._sync  # noqa: SLF001 (pinned SDK)
+            payload = await asyncio.to_thread(
+                sync_client._request_raw, "account/rateLimits/read", None  # noqa: SLF001
+            )
+        return payload if isinstance(payload, dict) else None
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("read_codex_quota failed: %s", exc)
+        return None
 
 
 def create_client(options: EngineOptions) -> CodexClient:

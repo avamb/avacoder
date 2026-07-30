@@ -188,6 +188,8 @@ class ParallelOrchestrator:
             logger.warning("Failed to load provider chain", exc_info=True)
             self._provider_chain = ["claude"]
         self._provider_cooldowns: dict[str, float] = {}
+        # Escalation state for repeated quota signals: provider -> (last_signal_ts, streak)
+        self._quota_signal_history: dict[str, tuple[float, int]] = {}
         self._active_provider: str = self._provider_chain[0]
         # Which provider each running agent was spawned on (keyed by the
         # spawn's primary feature id; used to attribute [QUOTA] signals)
@@ -1415,16 +1417,29 @@ class ParallelOrchestrator:
                 quota_match = self._QUOTA_PATTERN.search(line)
                 if quota_match:
                     seconds = int(quota_match.group(1))
-                    until = time.time() + seconds
+                    now_ts = time.time()
                     with self._lock:
                         pid = self._feature_provider.get(
                             feature_id or 0, self._active_provider
                         )
+                        # Escalate repeated signals: each leaf process starts
+                        # with a fresh backoff counter, so a provider whose
+                        # window is truly exhausted keeps reporting tiny
+                        # delays (~15s) and respawn churn follows. Grow the
+                        # cooldown floor on every repeat within 15 minutes:
+                        # 120s -> 480s -> 1920s -> 3600s.
+                        last_ts, streak = self._quota_signal_history.get(pid, (0.0, 0))
+                        streak = streak + 1 if now_ts - last_ts < 900 else 1
+                        self._quota_signal_history[pid] = (now_ts, streak)
+                        floor = min(3600, 120 * (4 ** (streak - 1)))
+                        effective = max(seconds, floor)
+                        until = now_ts + effective
                         if until > self._provider_cooldowns.get(pid, 0.0):
                             self._provider_cooldowns[pid] = until
                     print(
                         f"Quota guard: provider '{pid}' window exhausted; "
-                        f"cooling down for {seconds}s", flush=True,
+                        f"cooling down for {effective}s "
+                        f"(reported {seconds}s, signal #{streak})", flush=True,
                     )
                 if self.on_output is not None:
                     self.on_output(current_feature_id or 0, line)
