@@ -177,16 +177,37 @@ class ParallelOrchestrator:
         self.project_dir = project_dir
         self.max_concurrency = min(max(max_concurrency, 1), MAX_PARALLEL_AGENTS)
         self.model = model
-        # Per-complexity model routing (complexity 1-3 -> model id). Loaded from
-        # settings; empty dict means all features use self.model.
+        # Subscription failover: ordered provider chain (primary first) and
+        # per-provider cooldowns set when a provider's rate-limit window is
+        # exhausted. New spawns use the first non-cooling provider.
+        try:
+            from registry import get_provider_failover_chain
+            self._provider_chain: list[str] = get_provider_failover_chain()
+        except Exception:
+            logger.warning("Failed to load provider chain", exc_info=True)
+            self._provider_chain = ["claude"]
+        self._provider_cooldowns: dict[str, float] = {}
+        self._active_provider: str = self._provider_chain[0]
+        # Which provider each running agent was spawned on (keyed by the
+        # spawn's primary feature id; used to attribute [QUOTA] signals)
+        self._feature_provider: dict[int, str] = {}
+        if len(self._provider_chain) > 1:
+            logger.info("Provider failover chain: %s", " -> ".join(self._provider_chain))
+            print(f"Provider failover chain: {' -> '.join(self._provider_chain)}", flush=True)
+        # Per-provider complexity routing cache (loaded lazily)
+        self._routing_by_provider: dict[str, dict[int, str]] = {}
         try:
             from registry import get_model_routing
-            self.model_routing: dict[int, str] = get_model_routing()
+            self._routing_by_provider[self._active_provider] = get_model_routing(
+                self._active_provider
+            )
         except Exception:
             logger.warning("Failed to load model routing, using default model", exc_info=True)
-            self.model_routing = {}
-        if self.model_routing:
-            logger.info("Model routing active: %s", self.model_routing)
+            self._routing_by_provider[self._active_provider] = {}
+        if self._routing_by_provider[self._active_provider]:
+            logger.info(
+                "Model routing active: %s", self._routing_by_provider[self._active_provider]
+            )
         self.yolo_mode = yolo_mode
         self.testing_agent_ratio = min(max(testing_agent_ratio, 0), 3)  # Clamp 0-3
         self.testing_batch_size = min(max(testing_batch_size, 1), 15)  # Clamp 1-15
@@ -227,11 +248,6 @@ class ParallelOrchestrator:
         # Graceful pause (drain mode) flag
         self._drain_requested = False
 
-        # Quota guard: monotonic-ish deadline (time.time()) until which no new
-        # agents are spawned because the provider's rate-limit window is
-        # exhausted (set from agent [QUOTA] output lines in _read_output)
-        self._quota_pause_until: float = 0.0
-
         # Session tracking for logging/debugging
         self.session_start_time: datetime | None = None
 
@@ -248,16 +264,52 @@ class ParallelOrchestrator:
         """Get a new database session."""
         return self._session_maker()
 
-    def _resolve_model(self, complexities: list[int]) -> str | None:
+    def _routing_for(self, provider_id: str) -> dict[int, str]:
+        """Complexity routing table for a provider (lazily loaded)."""
+        if provider_id not in self._routing_by_provider:
+            try:
+                from registry import get_model_routing
+                self._routing_by_provider[provider_id] = get_model_routing(provider_id)
+            except Exception:
+                logger.warning("Failed to load routing for %s", provider_id, exc_info=True)
+                self._routing_by_provider[provider_id] = {}
+        return self._routing_by_provider[provider_id]
+
+    def _base_model_for(self, provider_id: str) -> str | None:
+        """Default model for a provider: the run's --model on the primary,
+        the provider's own default under failover."""
+        if provider_id == self._provider_chain[0]:
+            return self.model
+        try:
+            from registry import API_PROVIDERS
+            return API_PROVIDERS.get(provider_id, {}).get("default_model") or None
+        except Exception:
+            return None
+
+    def _current_provider(self) -> str | None:
+        """First provider in the failover chain whose cooldown has expired,
+        or None when every provider is cooling down."""
+        now = time.time()
+        with self._lock:
+            cooldowns = dict(self._provider_cooldowns)
+        for pid in self._provider_chain:
+            if cooldowns.get(pid, 0.0) <= now:
+                return pid
+        return None
+
+    def _resolve_model(self, complexities: list[int], provider_id: str | None = None) -> str | None:
         """Pick the model for a set of features via the routing table.
 
         A batch runs on the model routed for its *highest* complexity member
         (stronger model wins). Levels without a routing entry fall back to the
-        run's default model.
+        provider's base model.
         """
-        if not self.model_routing or not complexities:
-            return self.model
-        return self.model_routing.get(max(complexities)) or self.model
+        provider_id = provider_id or self._active_provider
+        routing = self._routing_for(provider_id)
+        base = self._base_model_for(provider_id)
+        if not routing or not complexities:
+            return base
+        return routing.get(max(complexities)) or base
 
     def _get_random_passing_feature(self) -> int | None:
         """Get a random passing feature for regression testing (no claim needed).
@@ -773,9 +825,15 @@ class ParallelOrchestrator:
         finally:
             session.close()
 
-        # Start coding agent subprocess with the complexity-routed model
+        # Start coding agent subprocess with the complexity-routed model on
+        # the currently active (failover-aware) provider
+        provider = self._active_provider
+        with self._lock:
+            self._feature_provider[feature_id] = provider
         success, message = self._spawn_coding_agent(
-            feature_id, model=self._resolve_model([complexity])
+            feature_id,
+            model=self._resolve_model([complexity], provider),
+            provider=provider,
         )
         if not success:
             return False, message
@@ -839,9 +897,15 @@ class ParallelOrchestrator:
         finally:
             session.close()
 
-        # Spawn batch coding agent with the complexity-routed model
+        # Spawn batch coding agent with the complexity-routed model on the
+        # currently active (failover-aware) provider
+        provider = self._active_provider
+        with self._lock:
+            self._feature_provider[feature_ids[0]] = provider
         success, message = self._spawn_coding_agent_batch(
-            feature_ids, model=self._resolve_model(complexities)
+            feature_ids,
+            model=self._resolve_model(complexities, provider),
+            provider=provider,
         )
         if not success:
             # Clear in_progress on failure
@@ -858,12 +922,15 @@ class ParallelOrchestrator:
 
         return True, f"Started batch [{', '.join(str(fid) for fid in feature_ids)}]"
 
-    def _spawn_coding_agent(self, feature_id: int, model: str | None = None) -> tuple[bool, str]:
+    def _spawn_coding_agent(
+        self, feature_id: int, model: str | None = None, provider: str | None = None
+    ) -> tuple[bool, str]:
         """Spawn a coding agent subprocess for a specific feature.
 
         Args:
             feature_id: Feature to implement
             model: Model override (from complexity routing); None = default
+            provider: Provider override (subscription failover); None = primary
         """
         # Create abort event
         abort_event = threading.Event()
@@ -883,6 +950,9 @@ class ParallelOrchestrator:
             cmd.extend(["--model", agent_model])
             if model and model != self.model:
                 print(f"Feature #{feature_id}: routed to model {model}", flush=True)
+        if provider and provider != self._provider_chain[0]:
+            cmd.extend(["--api-provider", provider])
+            print(f"Feature #{feature_id}: failover provider {provider}", flush=True)
         if self.yolo_mode:
             cmd.append("--yolo")
 
@@ -933,12 +1003,15 @@ class ParallelOrchestrator:
         print(f"Started coding agent for feature #{feature_id}", flush=True)
         return True, f"Started feature {feature_id}"
 
-    def _spawn_coding_agent_batch(self, feature_ids: list[int], model: str | None = None) -> tuple[bool, str]:
+    def _spawn_coding_agent_batch(
+        self, feature_ids: list[int], model: str | None = None, provider: str | None = None
+    ) -> tuple[bool, str]:
         """Spawn a coding agent subprocess for a batch of features.
 
         Args:
             feature_ids: Features to implement in one session
             model: Model override (from complexity routing); None = default
+            provider: Provider override (subscription failover); None = primary
         """
         primary_id = feature_ids[0]
         abort_event = threading.Event()
@@ -957,6 +1030,9 @@ class ParallelOrchestrator:
             cmd.extend(["--model", agent_model])
             if model and model != self.model:
                 print(f"Batch [{', '.join(str(f) for f in feature_ids)}]: routed to model {model}", flush=True)
+        if provider and provider != self._provider_chain[0]:
+            cmd.extend(["--api-provider", provider])
+            print(f"Batch [{', '.join(str(f) for f in feature_ids)}]: failover provider {provider}", flush=True)
         if self.yolo_mode:
             cmd.append("--yolo")
 
@@ -1058,8 +1134,13 @@ class ParallelOrchestrator:
                 "--agent-type", "testing",
                 "--testing-feature-ids", batch_str,
             ]
-            if self.model:
-                cmd.extend(["--model", self.model])
+            # Testing agents run on the active (failover-aware) provider
+            provider = self._active_provider
+            testing_model = self._base_model_for(provider)
+            if testing_model:
+                cmd.extend(["--model", testing_model])
+            if provider != self._provider_chain[0]:
+                cmd.extend(["--api-provider", provider])
 
             try:
                 # CREATE_NO_WINDOW on Windows prevents console window pop-ups
@@ -1221,16 +1302,21 @@ class ParallelOrchestrator:
                     claimed_id = int(claim_match.group(1))
                     if claimed_id != current_feature_id:
                         current_feature_id = claimed_id
-                # Detect provider rate-limit exhaustion -> global quota pause
+                # Detect provider rate-limit exhaustion -> cool down the
+                # provider this agent ran on (failover picks the next one)
                 quota_match = self._QUOTA_PATTERN.search(line)
                 if quota_match:
-                    pause_until = time.time() + int(quota_match.group(1))
+                    seconds = int(quota_match.group(1))
+                    until = time.time() + seconds
                     with self._lock:
-                        if pause_until > self._quota_pause_until:
-                            self._quota_pause_until = pause_until
+                        pid = self._feature_provider.get(
+                            feature_id or 0, self._active_provider
+                        )
+                        if until > self._provider_cooldowns.get(pid, 0.0):
+                            self._provider_cooldowns[pid] = until
                     print(
-                        f"Quota guard: provider rate limit reported; pausing new "
-                        f"agents for {quota_match.group(1)}s", flush=True,
+                        f"Quota guard: provider '{pid}' window exhausted; "
+                        f"cooling down for {seconds}s", flush=True,
                     )
                 if self.on_output is not None:
                     self.on_output(current_feature_id or 0, line)
@@ -1354,6 +1440,7 @@ class ParallelOrchestrator:
                     self._feature_to_primary.pop(fid, None)
             self.running_coding_agents.pop(feature_id, None)
             self.abort_events.pop(feature_id, None)
+            self._feature_provider.pop(feature_id, None)
 
         all_feature_ids = batch_ids or [feature_id]
 
@@ -1624,22 +1711,33 @@ class ParallelOrchestrator:
                         await self._wait_for_agent_completion()
                         continue
 
-                # Quota guard: the provider's rate-limit window is exhausted.
-                # Let running agents finish, but don't start new work until
-                # the window resets - starting features that get cut off
-                # mid-way is how half-done work happens on limited tiers.
-                with self._lock:
-                    quota_pause_until = self._quota_pause_until
-                now = time.time()
-                if now < quota_pause_until:
-                    remaining = int(quota_pause_until - now)
-                    resume_at = datetime.fromtimestamp(quota_pause_until).strftime("%H:%M:%S")
+                # Quota guard + subscription failover: pick the first provider
+                # in the chain whose rate-limit window isn't exhausted. If all
+                # are cooling down, let running agents finish but start
+                # nothing new - starting features that get cut off mid-way is
+                # how half-done work happens on limited tiers.
+                available_provider = self._current_provider()
+                if available_provider is None:
+                    with self._lock:
+                        soonest = min(
+                            self._provider_cooldowns.values(), default=time.time()
+                        )
+                    now = time.time()
+                    remaining = max(int(soonest - now), 1)
+                    resume_at = datetime.fromtimestamp(soonest).strftime("%H:%M:%S")
                     print(
-                        f"Quota guard active: no new agents until {resume_at} "
-                        f"({remaining}s remaining)", flush=True,
+                        f"Quota guard: all providers cooling down; no new agents "
+                        f"until {resume_at} ({remaining}s remaining)", flush=True,
                     )
                     await asyncio.sleep(min(remaining, POLL_INTERVAL * 4))
                     continue
+                if available_provider != self._active_provider:
+                    print(
+                        f"Failover: switching new agents from "
+                        f"'{self._active_provider}' to '{available_provider}'",
+                        flush=True,
+                    )
+                    self._active_provider = available_provider
 
                 # Maintain testing agents independently (runs every iteration)
                 self._maintain_testing_agents(feature_dicts)

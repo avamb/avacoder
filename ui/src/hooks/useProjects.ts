@@ -310,6 +310,7 @@ const DEFAULT_SETTINGS: Settings = {
   api_model: null,
   model_routing: {},
   model_planning: null,
+  provider_fallback: [],
 }
 
 const DEFAULT_PROVIDERS: ProvidersResponse = {

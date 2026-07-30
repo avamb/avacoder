@@ -119,6 +119,27 @@ def _parse_model_planning(raw: str | None, provider_id: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _has_auth_token(raw: str | None, provider_id: str) -> bool:
+    """Whether the current provider has a stored auth token (scoped store)."""
+    from registry import resolve_provider_scoped_setting
+
+    value = resolve_provider_scoped_setting(raw, provider_id)
+    return bool(value) and isinstance(value, str)
+
+
+def _parse_provider_fallback(raw: str | None) -> list[str]:
+    """Parse the stored provider_fallback JSON list."""
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [p for p in parsed if isinstance(p, str) and p in API_PROVIDERS]
+
+
 def _load_scoped_store(raw: str | None) -> dict:
     """Load the full provider-scoped store for merging on writes.
 
@@ -161,10 +182,14 @@ async def get_settings():
         effort=get_effort_setting(),
         api_provider=api_provider,
         api_base_url=all_settings.get("api_base_url"),
-        api_has_auth_token=bool(all_settings.get("api_auth_token")),
+        api_has_auth_token=_has_auth_token(all_settings.get("api_auth_token"), api_provider),
         api_model=all_settings.get("api_model"),
         model_routing=_parse_model_routing(all_settings.get("model_routing"), api_provider),
         model_planning=_parse_model_planning(all_settings.get("model_planning"), api_provider),
+        provider_fallback=[
+            p for p in _parse_provider_fallback(all_settings.get("provider_fallback"))
+            if p != api_provider
+        ],
     )
 
 
@@ -218,7 +243,15 @@ async def update_settings(update: SettingsUpdate):
         set_setting("api_base_url", update.api_base_url)
 
     if update.api_auth_token is not None:
-        set_setting("api_auth_token", update.api_auth_token)
+        # Stored per provider so a failover chain can hold keys for several
+        # token-based providers at once
+        provider_id = get_setting("api_provider", "claude") or "claude"
+        store = _load_scoped_store(get_setting("api_auth_token", None))
+        if update.api_auth_token:
+            store[provider_id] = update.api_auth_token
+        else:
+            store.pop(provider_id, None)
+        set_setting("api_auth_token", json.dumps(store))
 
     if update.api_model is not None:
         set_setting("api_model", update.api_model)
@@ -243,6 +276,9 @@ async def update_settings(update: SettingsUpdate):
             store.pop(provider_id, None)
         set_setting("model_planning", json.dumps(store))
 
+    if update.provider_fallback is not None:
+        set_setting("provider_fallback", json.dumps(update.provider_fallback))
+
     # Return updated settings
     all_settings = get_all_settings()
     api_provider = all_settings.get("api_provider", "claude")
@@ -261,8 +297,12 @@ async def update_settings(update: SettingsUpdate):
         effort=get_effort_setting(),
         api_provider=api_provider,
         api_base_url=all_settings.get("api_base_url"),
-        api_has_auth_token=bool(all_settings.get("api_auth_token")),
+        api_has_auth_token=_has_auth_token(all_settings.get("api_auth_token"), api_provider),
         api_model=all_settings.get("api_model"),
         model_routing=_parse_model_routing(all_settings.get("model_routing"), api_provider),
         model_planning=_parse_model_planning(all_settings.get("model_planning"), api_provider),
+        provider_fallback=[
+            p for p in _parse_provider_fallback(all_settings.get("provider_fallback"))
+            if p != api_provider
+        ],
     )

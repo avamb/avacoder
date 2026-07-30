@@ -197,6 +197,17 @@ Authentication:
         ),
     )
 
+    parser.add_argument(
+        "--api-provider",
+        type=str,
+        default=None,
+        help=(
+            "Provider override for this process (subscription failover): use "
+            "this provider instead of the api_provider setting. Set by the "
+            "orchestrator when the primary provider's window is exhausted."
+        ),
+    )
+
     return parser.parse_args()
 
 
@@ -207,6 +218,13 @@ def main() -> None:
 
     # Note: Authentication is handled by start.bat/start.sh before this script runs.
     # The Claude SDK auto-detects credentials from ~/.claude/.credentials.json
+
+    # Subscription failover: a provider override from the orchestrator applies
+    # to every provider-dependent lookup in this process (engine config, env,
+    # routing, planning model). Must be set BEFORE get_effective_sdk_env().
+    if args.api_provider:
+        os.environ["AUTOFORGE_PROVIDER_OVERRIDE"] = args.api_provider
+        print(f"Provider override active: {args.api_provider}", flush=True)
 
     # Apply UI-configured provider settings to this process's environment.
     # This ensures CLI-launched agents respect Settings UI provider config (GLM, Ollama, etc.).

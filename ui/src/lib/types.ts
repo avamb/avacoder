@@ -669,6 +669,8 @@ export interface Settings {
   model_routing: Record<string, string>
   /** Model for planning stages (initializer, spec/expand chats); null = provider's strongest */
   model_planning: string | null
+  /** Ordered fallback providers for subscription failover (excluding primary) */
+  provider_fallback: string[]
 }
 
 export interface SettingsUpdate {
@@ -684,6 +686,7 @@ export interface SettingsUpdate {
   api_model?: string
   model_routing?: Record<string, string>
   model_planning?: string
+  provider_fallback?: string[]
 }
 
 export interface ProjectSettingsUpdate {

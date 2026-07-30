@@ -499,6 +499,8 @@ class SettingsResponse(BaseModel):
     # Model for planning stages (initializer, spec/expand chats).
     # Empty = provider's strongest (default) model
     model_planning: str | None = None
+    # Ordered fallback providers for subscription failover (excluding primary)
+    provider_fallback: list[str] = Field(default_factory=list)
 
 
 class ModelsResponse(BaseModel):
@@ -522,6 +524,23 @@ class SettingsUpdate(BaseModel):
     api_model: str | None = Field(None, max_length=200)
     model_routing: dict[str, str] | None = None
     model_planning: str | None = Field(None, max_length=200)
+    provider_fallback: list[str] | None = None
+
+    @field_validator('provider_fallback')
+    @classmethod
+    def validate_provider_fallback(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None:
+            from registry import API_PROVIDERS
+            seen = set()
+            for pid in v:
+                if pid not in API_PROVIDERS:
+                    raise ValueError(f"Unknown fallback provider '{pid}'")
+                if pid in seen:
+                    raise ValueError(f"Duplicate fallback provider '{pid}'")
+                seen.add(pid)
+            if len(v) > 5:
+                raise ValueError("At most 5 fallback providers")
+        return v
 
     @field_validator('model_routing')
     @classmethod

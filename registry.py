@@ -929,7 +929,8 @@ def get_effective_sdk_env() -> dict[str, str]:
         Dict ready to merge into subprocess env or pass to SDK.
     """
     all_settings = get_all_settings()
-    provider_id = all_settings.get("api_provider", "claude")
+    provider_id = _effective_provider_id(all_settings)
+    settings_provider = all_settings.get("api_provider", "claude")
 
     if provider_id == "claude":
         # Default behavior: forward existing env vars
@@ -970,18 +971,30 @@ def get_effective_sdk_env() -> dict[str, str]:
     sdk_env["CLOUD_ML_REGION"] = ""
     sdk_env["ANTHROPIC_VERTEX_PROJECT_ID"] = ""
 
-    # Base URL
-    base_url = all_settings.get("api_base_url") or provider.get("base_url")
+    # Base URL. The api_base_url setting belongs to the PRIMARY provider;
+    # under a failover override use the provider's own base_url only.
+    if provider_id == settings_provider:
+        base_url = all_settings.get("api_base_url") or provider.get("base_url")
+    else:
+        base_url = provider.get("base_url")
     if base_url:
         sdk_env["ANTHROPIC_BASE_URL"] = base_url
 
-    # Auth token
-    auth_token = all_settings.get("api_auth_token")
-    if auth_token:
+    # Auth token (stored per provider; legacy plain values resolve for any)
+    auth_token = resolve_provider_scoped_setting(
+        all_settings.get("api_auth_token"), provider_id
+    )
+    if auth_token and isinstance(auth_token, str):
         sdk_env[auth_env_var] = auth_token
 
-    # Model - set all three tier overrides to the same model
-    model = all_settings.get("api_model") or provider.get("default_model")
+    # Model - set all three tier overrides to the same model.
+    # api_model also belongs to the primary provider; under an override the
+    # fallback provider runs its own default (the orchestrator still passes an
+    # explicit routed --model per spawn).
+    if provider_id == settings_provider:
+        model = all_settings.get("api_model") or provider.get("default_model")
+    else:
+        model = provider.get("default_model")
     if model:
         sdk_env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = model
         sdk_env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = model
@@ -1017,7 +1030,7 @@ def get_effective_engine_config():
     from engines.types import EngineConfig
 
     all_settings = get_all_settings()
-    provider_id = all_settings.get("api_provider", "claude")
+    provider_id = _effective_provider_id(all_settings)
     provider = API_PROVIDERS.get(provider_id)
     if provider is None:
         # Same graceful degradation as get_effective_sdk_env()
@@ -1046,6 +1059,61 @@ def get_effective_engine_config():
     )
 
 
+def _effective_provider_id(all_settings: dict) -> str:
+    """Provider for this process: the AUTOFORGE_PROVIDER_OVERRIDE env var
+    (set by the orchestrator for failover spawns) or the api_provider setting."""
+    override = os.environ.get("AUTOFORGE_PROVIDER_OVERRIDE", "").strip()
+    if override and override in API_PROVIDERS:
+        return override
+    return all_settings.get("api_provider", "claude")
+
+
+def is_provider_ready(provider_id: str) -> bool:
+    """Whether a provider has usable credentials for unattended agents."""
+    provider = API_PROVIDERS.get(provider_id)
+    if not provider:
+        return False
+    if provider.get("engine", "claude") == "codex":
+        codex_home = os.environ.get("CODEX_HOME")
+        auth = (Path(codex_home) if codex_home else Path.home() / ".codex") / "auth.json"
+        return auth.exists()
+    if provider.get("requires_auth"):
+        token = resolve_provider_scoped_setting(
+            get_all_settings().get("api_auth_token"), provider_id
+        )
+        return bool(token) and isinstance(token, str)
+    return True
+
+
+def get_provider_failover_chain() -> list[str]:
+    """Primary provider followed by the configured, credential-ready fallbacks.
+
+    The "provider_fallback" setting stores an ordered JSON list of provider
+    ids to switch to when the active provider's rate-limit window is
+    exhausted (plan section 8a item 11). Unknown, duplicate, or
+    not-ready providers are skipped.
+    """
+    all_settings = get_all_settings()
+    primary = all_settings.get("api_provider", "claude")
+    chain = [primary]
+    raw = all_settings.get("provider_fallback")
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            parsed = []
+        if isinstance(parsed, list):
+            for pid in parsed:
+                if pid in API_PROVIDERS and pid not in chain:
+                    if is_provider_ready(pid):
+                        chain.append(pid)
+                    else:
+                        logger.warning(
+                            "provider_fallback: '%s' has no usable credentials, skipping", pid
+                        )
+    return chain
+
+
 def resolve_provider_scoped_setting(raw: str | None, provider_id: str):
     """Resolve a provider-scoped JSON setting to the current provider's value.
 
@@ -1072,7 +1140,7 @@ def resolve_provider_scoped_setting(raw: str | None, provider_id: str):
     return value if value else None
 
 
-def get_planning_model() -> str:
+def get_planning_model(provider_id: str | None = None) -> str:
     """Model for planning stages: initializer agent, spec chat, expand chat.
 
     Feature breakdown, dependency graphs, and complexity ratings determine the
@@ -1082,7 +1150,7 @@ def get_planning_model() -> str:
     values fall back.
     """
     all_settings = get_all_settings()
-    provider_id = all_settings.get("api_provider", "claude")
+    provider_id = provider_id or _effective_provider_id(all_settings)
     provider = API_PROVIDERS.get(provider_id, API_PROVIDERS["claude"])
     if provider_id == "claude":
         known_models = set(VALID_MODELS)
@@ -1109,21 +1177,20 @@ def get_planning_model() -> str:
     return fallback
 
 
-def get_model_routing() -> dict[int, str]:
+def get_model_routing(provider_id: str | None = None) -> dict[int, str]:
     """Read the per-complexity model routing table from settings.
 
-    The "model_routing" setting stores a JSON object mapping complexity level
-    ("1" = simple, "2" = standard, "3" = complex) to a model id of the current
-    provider. Empty values mean "use the default model". Entries that don't
-    match the current provider's model list are dropped (protects against a
-    stale routing table after a provider switch).
+    The "model_routing" setting stores, per provider, a JSON object mapping
+    complexity level ("1" = simple, "2" = standard, "3" = complex) to a model
+    id. Empty values mean "use the default model". Entries that don't match
+    the provider's model list are dropped.
 
     Returns:
         Dict mapping complexity (int 1-3) to model id. Missing levels fall
         back to the run's default model at the call site.
     """
     all_settings = get_all_settings()
-    provider_id = all_settings.get("api_provider", "claude")
+    provider_id = provider_id or _effective_provider_id(all_settings)
     parsed = resolve_provider_scoped_setting(
         all_settings.get("model_routing"), provider_id
     )

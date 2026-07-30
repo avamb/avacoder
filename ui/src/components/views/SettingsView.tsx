@@ -51,6 +51,16 @@ export function SettingsView() {
     }
   }
 
+  const handleFallbackToggle = (providerId: string) => {
+    if (!updateSettings.isPending && settings) {
+      const current = settings.provider_fallback ?? []
+      const next = current.includes(providerId)
+        ? current.filter((p) => p !== providerId)
+        : [...current, providerId]
+      updateSettings.mutate({ provider_fallback: next })
+    }
+  }
+
   const handleRoutingChange = (level: '1' | '2' | '3', modelId: string) => {
     if (!updateSettings.isPending && settings) {
       const routing = { ...(settings.model_routing ?? {}) }
@@ -413,6 +423,38 @@ export function SettingsView() {
                     </div>
                   )}
                 </div>
+
+                {/* Fallback Providers (subscription failover) */}
+                {providers.length > 1 && (
+                  <div className="space-y-2 pt-2">
+                    <Label className="font-medium">Fallback Providers</Label>
+                    <p className="text-xs text-muted-foreground">
+                      When the active provider&apos;s rate limit is exhausted, new agent
+                      sessions switch to the first available fallback (in click order)
+                      and return automatically after the limit resets.
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {providers.filter((p) => p.id !== currentProvider).map((provider) => {
+                        const order = (settings.provider_fallback ?? []).indexOf(provider.id)
+                        return (
+                          <button
+                            key={provider.id}
+                            onClick={() => handleFallbackToggle(provider.id)}
+                            disabled={isSaving}
+                            className={`py-1 px-2.5 text-xs font-medium rounded-md border transition-colors ${
+                              order >= 0
+                                ? 'bg-primary/15 text-primary border-primary'
+                                : 'bg-background text-muted-foreground border-border hover:bg-muted'
+                            } ${isSaving ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          >
+                            {order >= 0 && <span className="font-mono mr-1">{order + 1}.</span>}
+                            {provider.name.split(' (')[0]}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 {/* Planning Model */}
                 {models.length > 1 && (
