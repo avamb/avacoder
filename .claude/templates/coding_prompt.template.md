@@ -182,6 +182,13 @@ in repo-wide artifacts. Complete every applicable item:
 
 ### STEP 7: COMMIT YOUR PROGRESS
 
+**Commit INCREMENTALLY, not only at the end.** Sessions can be interrupted at
+any moment (provider rate limits, restarts) and uncommitted work strands in
+the working tree where the next session may not find all of it. After every
+coherent working sub-step - an endpoint with its test green, a component that
+renders, a migration that applies - make a checkpoint commit immediately.
+Never accumulate more than ~30 minutes of work uncommitted.
+
 Make a descriptive git commit.
 
 **Git Commit Rules:**
