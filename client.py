@@ -310,6 +310,14 @@ def create_client(
     # Ensure project directory exists before creating settings file
     project_dir.mkdir(parents=True, exist_ok=True)
 
+    # Self-heal: if a chat session crashed and left its system prompt in the
+    # project CLAUDE.md ("You must NEVER implement code..."), restore the real
+    # one - otherwise this coding agent inherits read-only instructions and
+    # burns its whole session refusing to write code.
+    from claude_md_transport import restore_chat_claude_md
+    if restore_chat_claude_md(project_dir, context="coding agent startup"):
+        print("   - Restored project CLAUDE.md (stale chat prompt removed)")
+
     # Write settings to a file in the project directory
     from autoforge_paths import get_claude_settings_path
     settings_file = get_claude_settings_path(project_dir)

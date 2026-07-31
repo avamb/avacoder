@@ -218,6 +218,12 @@ class AssistantChatSession:
             finally:
                 self._client_entered = False
                 self.client = None
+        # Put the project's real CLAUDE.md back (claude-engine transport)
+        try:
+            from claude_md_transport import restore_chat_claude_md
+            restore_chat_claude_md(self.project_dir, context="assistant chat closed")
+        except Exception:
+            logger.warning("CLAUDE.md restore failed", exc_info=True)
 
     async def start(self) -> AsyncGenerator[dict, None]:
         """
@@ -285,11 +291,10 @@ class AssistantChatSession:
         if engine_config.engine == "claude":
             # Claude CLI: write the system prompt to CLAUDE.md and load it via
             # setting_sources (avoids the ~8191 char Windows cmd-line limit).
-            # CAUTION: this overwrites the project CLAUDE.md - a known
-            # upstream wart; other engines must not inherit it.
-            claude_md_path = self.project_dir / "CLAUDE.md"
-            with open(claude_md_path, "w", encoding="utf-8") as f:
-                f.write(system_prompt)
+            # The transport backs up the original and close() restores it, so
+            # coding agents never inherit the chat's read-only instructions.
+            from claude_md_transport import write_chat_claude_md
+            claude_md_path = write_chat_claude_md(self.project_dir, system_prompt)
             logger.info(f"Wrote assistant system prompt to {claude_md_path}")
             prompt_kwargs = {"setting_sources": ["project"]}
         else:
