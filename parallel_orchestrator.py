@@ -885,11 +885,23 @@ class ParallelOrchestrator:
             if total_agents >= MAX_TOTAL_AGENTS:
                 return False, f"At max total agents ({total_agents}/{MAX_TOTAL_AGENTS})"
 
-        # Mark all features as in_progress in a single transaction
+        # Mark ONLY the first feature of the batch as in_progress.
+        #
+        # A batch agent works its features sequentially and claims each one via
+        # the feature_claim_and_get MCP tool when it actually starts on it, so
+        # the later members are merely reserved - not being worked on. Marking
+        # them all up front made the board show max_concurrency * batch_size
+        # features "In Progress" at once (8 with 3 agents x batch 3), which
+        # misrepresents reality and hides the real queue. The remaining members
+        # stay Pending until their agent reaches them; they are protected from
+        # double-assignment by the in-memory reservation in _batch_features /
+        # _feature_to_primary, which get_ready_features() and
+        # get_resumable_features() both honour.
+        primary_id = feature_ids[0]
         session = self.get_session()
         try:
-            features_to_mark = []
             complexities: list[int] = []
+            primary_feature = None
             for fid in feature_ids:
                 feature = session.query(Feature).filter(Feature.id == fid).first()
                 if not feature:
@@ -897,17 +909,20 @@ class ParallelOrchestrator:
                 if feature.passes:
                     return False, f"Feature {fid} already complete"
                 complexities.append(feature.complexity if feature.complexity is not None else 2)
-                if not resume:
-                    if feature.in_progress:
+                if fid == primary_id:
+                    primary_feature = feature
+                    if resume:
+                        if not feature.in_progress:
+                            return False, f"Feature {fid} not in progress, cannot resume"
+                    elif feature.in_progress:
                         return False, f"Feature {fid} already in progress"
-                    features_to_mark.append(feature)
-                else:
-                    if not feature.in_progress:
-                        return False, f"Feature {fid} not in progress, cannot resume"
+                elif not resume and feature.in_progress:
+                    # A queued member being worked on elsewhere: don't batch it
+                    return False, f"Feature {fid} already in progress"
 
-            for feature in features_to_mark:
-                feature.in_progress = True
-            session.commit()
+            if not resume and primary_feature is not None:
+                primary_feature.in_progress = True
+                session.commit()
         finally:
             session.close()
 
