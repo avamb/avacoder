@@ -28,6 +28,7 @@
     "auth.py",
     "autoforge_paths.py",
     "autonomous_agent_demo.py",
+    "claude_md_transport.py",
     "client.py",
     "env_constants.py",
     "parallel_orchestrator.py",
